@@ -105,7 +105,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         #endregion
 
         [TestMethod]
-        public void ChainMethodsRejectUntrustedSelfSignedCertificate()
+        public void ChainMethods_UntrustedSelfSignedCertificate_RejectCertificate()
         {
             using X509Certificate2 cert = CreateCertificate();
 
@@ -117,7 +117,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         }
 
         [TestMethod]
-        public void CertificateFromPem()
+        public void CreateFromPem_CertificatePem_ReturnsExpectedCertificate()
         {
             using X509Certificate2 cert = Certificate.CreateFromPem(CertPem);
             AssertCertificateProperties(cert);
@@ -133,20 +133,20 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         [DataRow(Certificate.PemCertHeader + "AQID")]
         [DataRow(Certificate.PemCertFooter + Certificate.PemCertHeader)]
         [DataRow(Certificate.PemCertHeader + "not base64!" + Certificate.PemCertFooter)]
-        public void CertificateFromPemRejectsMalformedInput(string pem)
+        public void CreateFromPem_MalformedInput_ThrowsFormatException(string pem)
         {
             Assert.ThrowsExactly<FormatException>(() => Certificate.CreateFromPem(pem));
         }
 
         [TestMethod]
-        public void CertificateFromPemRejectsNullAndEmptyInput()
+        public void CreateFromPem_NullAndEmptyInput_ThrowsArgumentException()
         {
             Assert.ThrowsExactly<ArgumentNullException>(() => Certificate.CreateFromPem(null!));
             Assert.ThrowsExactly<ArgumentException>(() => Certificate.CreateFromPem(string.Empty));
         }
 
         [TestMethod]
-        public void CertificateFromPemRejectsNonCertificateData()
+        public void CreateFromPem_NonCertificateData_ThrowsCryptographicException()
         {
             string pem = Certificate.PemCertHeader + "\nAQID\n" + Certificate.PemCertFooter;
 
@@ -154,7 +154,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         }
 
         [TestMethod]
-        public void CertificatePemRoundTrip()
+        public void CreateFromPem_ExportedCertificate_PreservesRawData()
         {
             using X509Certificate2 original = CreateCertificate();
             using X509Certificate2 imported = Certificate.CreateFromPem("\n" + original.ExportPem() + "\n");
@@ -164,7 +164,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         }
 
         [TestMethod]
-        public void SubjectAltNameGettersPreserveValuesAndOrder()
+        public void SubjectAltNameGetters_MultipleNames_PreserveValuesAndOrder()
         {
             SubjectAlternativeNameBuilder san = new SubjectAlternativeNameBuilder();
             san.AddDnsName("first.example.test");
@@ -188,7 +188,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         }
 
         [TestMethod]
-        public void SubjectAltNameGettersIgnoreOtherNameWithUnrelatedOid()
+        public void SubjectAltNameGetters_OtherNameWithUnrelatedOid_IgnoreEntry()
         {
             AsnWriter writer = new AsnWriter(AsnEncodingRules.DER);
             Asn1Tag otherNameTag = new Asn1Tag(TagClass.ContextSpecific, 0, isConstructed: true);
@@ -215,7 +215,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         }
 
         [TestMethod]
-        public void SubjectAltNameGettersReturnEmptyWhenExtensionIsMissing()
+        public void SubjectAltNameGetters_MissingExtension_ReturnEmpty()
         {
             using X509Certificate2 cert = CreateCertificate();
 
@@ -227,7 +227,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         [DataRow("300282")]
         [DataRow("3003820261")]
         [DataRow("3000FF")]
-        public void SubjectAltNameGettersReturnEmptyWhenExtensionIsMalformed(string encodedSan)
+        public void SubjectAltNameGetters_MalformedExtension_ReturnEmpty(string encodedSan)
         {
             using X509Certificate2 cert = CreateCertificate(
                 new X509Extension("2.5.29.17", Convert.FromHexString(encodedSan), false));
@@ -236,7 +236,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         }
 
         [TestMethod]
-        public void SubjectAltNameGettersDiscardPartialResultsWhenExtensionIsMalformed()
+        public void SubjectAltNameGetters_MalformedExtension_DiscardPartialResults()
         {
             SubjectAlternativeNameBuilder san = new SubjectAlternativeNameBuilder();
             san.AddDnsName("first.example.test");
@@ -251,7 +251,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         }
 
         [TestMethod]
-        public void PrivateKeyPemRoundTripKeepsCertificateKeyUsable()
+        public void ExportPrivateKeyPem_RoundTrip_KeepsCertificateKeyUsable()
         {
             using X509Certificate2 cert = CreateCertificate();
             string pem = cert.ExportPrivateKeyPem();
@@ -272,7 +272,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         }
 
         [TestMethod]
-        public void PrivateKeyPemRejectsCertificateWithoutPrivateKey()
+        public void ExportPrivateKeyPem_CertificateWithoutPrivateKey_ThrowsInvalidOperationException()
         {
             using X509Certificate2 cert = Certificate.CreateFromPem(CertPem);
 
@@ -280,7 +280,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         }
 
         [TestMethod]
-        public void PrivateKeyPemRejectsNonRsaCertificate()
+        public void ExportPrivateKeyPem_NonRsaCertificate_ThrowsInvalidOperationException()
         {
             using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
             CertificateRequest request = new CertificateRequest("CN=ECDSA test", key, HashAlgorithmName.SHA256);
@@ -294,7 +294,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         [DataRow(-1, 1, false)]
         [DataRow(-2, -1, true)]
         [DataRow(1, 2, true)]
-        public void IsExpiredChecksCertificateValidityPeriod(int notBeforeDays, int notAfterDays, bool expected)
+        public void IsExpired_CertificateValidityPeriod_ReturnsExpectedResult(int notBeforeDays, int notAfterDays, bool expected)
         {
             using X509Certificate2 cert = CreateCertificate(notBeforeDays: notBeforeDays, notAfterDays: notAfterDays);
 

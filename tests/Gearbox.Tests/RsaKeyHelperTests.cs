@@ -844,7 +844,7 @@ namespace Gearbox.Tests
         #endregion
 
         [TestMethod]
-        public void EncodeKeyPem()
+        public void EncodeParametersPem_KnownKeys_ReturnsExpectedPem()
         {
             string result = X509Certificate2Extensions.RsaKeyHelper.EncodeParametersPem(RsaKey1024);
             Assert.AreEqual(RsaKeyPem1024, result);
@@ -860,7 +860,7 @@ namespace Gearbox.Tests
         }
 
         [TestMethod]
-        public void CreateFullParameters()
+        public void CreateFullKeyParameters_KnownPrimesAndExponent_DerivesExpectedParameters()
         {
             TestParametersDerivation(RsaKey1024);
             TestParametersDerivation(RsaKey2048);
