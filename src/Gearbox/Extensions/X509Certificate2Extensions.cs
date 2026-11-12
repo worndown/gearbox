@@ -554,15 +554,16 @@ namespace Gearbox.Extensions
                 //     coefficient       INTEGER,  -- (inverse of q) mod p  <-- RSAParameters.InverseQ
                 //     otherPrimeInfos   OtherPrimeInfos OPTIONAL
                 // }
-                int approxSequenceLen = rsa.D.Length +
-                                rsa.DP.Length +
-                                rsa.DQ.Length +
-                                rsa.Exponent.Length +
-                                rsa.InverseQ.Length +
-                                rsa.Modulus.Length +
-                                rsa.P.Length +
-                                rsa.Q.Length +
-                                18;
+                int approxSequenceLen =
+                    rsa.D?.Length ?? 0 +
+                    rsa.DP?.Length ?? 0 +
+                    rsa.DQ?.Length ?? 0+
+                    rsa.Exponent?.Length ?? 0 +
+                    rsa.InverseQ?.Length ?? 0 +
+                    rsa.Modulus?.Length ?? 0 +
+                    rsa.P?.Length ?? 0 +
+                    rsa.Q?.Length ?? 0 +
+                    18;
 
                 using (MemoryStream ms = new MemoryStream())
                 using (BinaryWriter writer = new BinaryWriter(ms))
@@ -599,8 +600,13 @@ namespace Gearbox.Extensions
             /// </summary>
             /// <param name="writer">The output.</param>
             /// <param name="value">Value to encode.</param>
-            private static void EncodeIntegerValue(BinaryWriter writer, byte[] value)
+            private static void EncodeIntegerValue(BinaryWriter writer, byte[]? value)
             {
+                if (value is null)
+                {
+                    return;
+                }
+
                 writer.Write((byte)0x02);
                 bool align = (value[0] & 0x80) != 0;
 

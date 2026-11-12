@@ -25,13 +25,10 @@
   </ItemGroup>
 
   <Target Name="CopyTestProcess" AfterTargets="Build">
-    <MSBuild Projects="..\Gearbox.TestProcess\Gearbox.TestProcess.csproj"
-             Targets="GetTestProcessFiles" Properties="Configuration=$(Configuration)">
+    <MSBuild Projects="..\Gearbox.TestProcess\Gearbox.TestProcess.csproj" Targets="GetTestProcessFiles" Properties="Configuration=$(Configuration)">
       <Output TaskParameter="TargetOutputs" ItemName="TestProcessFile" />
     </MSBuild>
-    <Copy SourceFiles="@(TestProcessFile)"
-          DestinationFiles="@(TestProcessFile->'$(TargetDir)test-process\%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(TestProcessFile)" DestinationFiles="@(TestProcessFile->'$(TargetDir)test-process\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>
