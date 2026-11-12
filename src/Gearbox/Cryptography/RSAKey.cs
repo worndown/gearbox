@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -167,14 +168,14 @@ namespace Gearbox.Cryptography
             //     otherPrimeInfos   OtherPrimeInfos OPTIONAL
             // }
             int approxSequenceLen =
-                (rsa.D?.Length ?? 0) +
-                (rsa.DP?.Length ?? 0) +
-                (rsa.DQ?.Length ?? 0) +
-                (rsa.Exponent?.Length ?? 0) +
-                (rsa.InverseQ?.Length ?? 0) +
-                (rsa.Modulus?.Length ?? 0) +
-                (rsa.P?.Length ?? 0) +
-                (rsa.Q?.Length ?? 0) +
+                (rsa.D?.Length ?? throw new ArgumentException("Missing private exponent.")) +
+                (rsa.DP?.Length ?? throw new ArgumentException("Missing exponent 1.")) +
+                (rsa.DQ?.Length ?? throw new ArgumentException("Missing exponent 2.")) +
+                (rsa.Exponent?.Length ?? throw new ArgumentException("Missing public exponent.")) +
+                (rsa.InverseQ?.Length ?? throw new ArgumentException("Missing inverse Q.")) +
+                (rsa.Modulus?.Length ?? throw new ArgumentException("Missing modulus.")) +
+                (rsa.P?.Length ?? throw new ArgumentException("Missing prime P.")) +
+                (rsa.Q?.Length ?? throw new ArgumentException("Missing prime Q.")) +
                 18;
 
             using (MemoryStream ms = new MemoryStream())
@@ -212,13 +213,8 @@ namespace Gearbox.Cryptography
         /// </summary>
         /// <param name="writer">The output.</param>
         /// <param name="value">Value to encode.</param>
-        private static void EncodeIntegerValue(BinaryWriter writer, byte[]? value)
+        private static void EncodeIntegerValue(BinaryWriter writer, byte[] value)
         {
-            if (value is null)
-            {
-                return;
-            }
-
             writer.Write((byte)0x02);
             bool align = (value[0] & 0x80) != 0;
 
