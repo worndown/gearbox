@@ -6,7 +6,8 @@ namespace Gearbox
     /// Base class for running executables and reading output.
     /// </summary>
     /// <remarks>
-    /// An instance supports one run at a time. Read Output and Error after Run completes.
+    /// An instance supports one run at a time, across Run and RunAsync.
+    /// Read Output and Error after the run completes, including asynchronous cancellation cleanup.
     /// Results are read-only live views, replaced by each valid run, including a failed launch.
     /// Arguments use the operating system's command-line quoting rules; no shell is invoked.
     /// The child inherits the current working directory, environment, and default stream encodings.
@@ -59,13 +60,13 @@ namespace Gearbox
         /// <summary>
         /// Gets executable standard output.
         /// </summary>
-        /// <remarks>Read-only live view of the latest run, including blank lines and partial output on timeout.</remarks>
+        /// <remarks>Read-only live view of the latest run, including blank lines and partial output on timeout or cancellation.</remarks>
         public IList<string> Output => this.output.AsReadOnly();
 
         /// <summary>
         /// Gets executable standard error.
         /// </summary>
-        /// <remarks>Read-only live view of the latest run, including blank lines and partial output on timeout.</remarks>
+        /// <remarks>Read-only live view of the latest run, including blank lines and partial output on timeout or cancellation.</remarks>
         public IList<string> Error => this.error.AsReadOnly();
 
         /// <summary>
@@ -106,22 +107,8 @@ namespace Gearbox
             this.output.Clear();
             this.error.Clear();
 
-            using (Process process = new Process())
+            using (Process process = this.CreateProcess(arguments))
             {
-                process.StartInfo.FileName = this.executable;
-                process.StartInfo.UseShellExecute = false;
-                process.StartInfo.CreateNoWindow = true;
-                process.StartInfo.RedirectStandardError = true;
-                process.StartInfo.RedirectStandardOutput = true;
-
-                if (arguments != null)
-                {
-                    process.StartInfo.Arguments = arguments;
-                }
-
-                process.OutputDataReceived += this.OnOutputDataReceived;
-                process.ErrorDataReceived += this.OnErrorDataReceived;
-
                 process.Start();
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
@@ -136,6 +123,89 @@ namespace Gearbox
                 process.WaitForExit();
                 return process.ExitCode;
             }
+        }
+
+        /// <summary>
+        /// Runs executable asynchronously and waits for it and its output readers to finish.
+        /// </summary>
+        /// <param name="arguments">Command-line arguments to the executable.</param>
+        /// <param name="timeout">Process exit timeout in milliseconds; -1 waits indefinitely, and 0 checks immediately.</param>
+        /// <param name="cancellationToken">Cancels the run and terminates its process tree.</param>
+        /// <returns>A task returning the process exit code after output capture finishes.</returns>
+        /// <exception cref="ArgumentOutOfRangeException">Timeout is less than -1. Previous results are preserved.</exception>
+        /// <exception cref="TimeoutException">The process timed out; its process tree was terminated and partial output retained.</exception>
+        /// <exception cref="OperationCanceledException">Cancellation was requested. A started process tree was terminated and partial output retained.</exception>
+        /// <remarks>
+        /// Timeout validation is synchronous. A token already canceled prevents launch and preserves
+        /// previous results. The timeout covers process exit; cancellation also covers output draining.
+        /// Termination and output cleanup finish before the task completes and may take additional time.
+        /// Process launch and cleanup failures propagate to the caller.
+        /// </remarks>
+        public Task<int> RunAsync(string? arguments = null, int timeout = Timeout.Infinite, CancellationToken cancellationToken = default)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(timeout, Timeout.Infinite);
+            return this.RunAsyncCore(arguments, timeout, cancellationToken);
+        }
+
+        private async Task<int> RunAsyncCore(string? arguments, int timeout, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            this.output.Clear();
+            this.error.Clear();
+
+            using Process process = this.CreateProcess(arguments);
+            TaskCompletionSource exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            process.Exited += (_, _) => exited.TrySetResult();
+            process.EnableRaisingEvents = true;
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            try
+            {
+                // WaitForExitAsync also drains readers, so time only native process exit here.
+                if (!process.HasExited)
+                {
+                    try
+                    {
+                        await exited.Task.WaitAsync(TimeSpan.FromMilliseconds(timeout), cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (TimeoutException) when (process.HasExited)
+                    {
+                        // Exit notifications can be delayed after the native process has exited.
+                    }
+                }
+
+                await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                return process.ExitCode;
+            }
+            catch (TimeoutException exception)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().ConfigureAwait(false);
+                throw new TimeoutException($"Executable \"{this.executable}\" did not exit within {timeout} milliseconds.", exception);
+            }
+            catch (OperationCanceledException)
+            {
+                process.Kill(entireProcessTree: true);
+                // Cleanup must finish even though the caller's token has been canceled.
+                await process.WaitForExitAsync().ConfigureAwait(false);
+                throw;
+            }
+        }
+
+        private Process CreateProcess(string? arguments)
+        {
+            Process process = new Process();
+            process.StartInfo.FileName = this.executable;
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.CreateNoWindow = true;
+            process.StartInfo.RedirectStandardError = true;
+            process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.Arguments = arguments ?? string.Empty;
+            process.OutputDataReceived += this.OnOutputDataReceived;
+            process.ErrorDataReceived += this.OnErrorDataReceived;
+            return process;
         }
 
         /// <summary>

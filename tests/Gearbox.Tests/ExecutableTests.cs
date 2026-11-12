@@ -6,9 +6,10 @@ using System.Text.Json;
 namespace Gearbox.Tests
 {
     [TestClass]
-    public class ExecutableTests
+    public partial class ExecutableTests
     {
         private string? root = null;
+        private string Root => this.root ?? throw new InvalidOperationException("The test fixture has not been initialized.");
         private string executableName = null!;
         private static string HelperDirectory => Path.Combine(AppContext.BaseDirectory, "test-process");
         private static string HelperName => "Gearbox.TestProcess" + (OperatingSystem.IsWindows() ? ".exe" : "");
@@ -20,7 +21,7 @@ namespace Gearbox.Tests
             Assert.IsTrue(File.Exists(HelperPath), "The test process and its runtime files must be built and copied beside the tests.");
             this.root = Path.Combine(Path.GetTempPath(), "Gearbox.ExecutableTests." + Guid.NewGuid().ToString("N"));
             this.executableName = "probe-" + Guid.NewGuid().ToString("N") + (OperatingSystem.IsWindows() ? ".exe" : "");
-            Directory.CreateDirectory(this.root);
+            Directory.CreateDirectory(this.Root);
         }
 
         [TestCleanup]
@@ -32,7 +33,7 @@ namespace Gearbox.Tests
             }
 
             // Markers include start times so cleanup cannot target a reused process ID.
-            foreach (string marker in Directory.EnumerateFiles(this.root, "*.pid", SearchOption.AllDirectories))
+            foreach (string marker in Directory.EnumerateFiles(this.Root, "*.pid", SearchOption.AllDirectories))
             {
                 using Process? process = GetMarkedProcess(marker);
                 if (process != null)
@@ -42,7 +43,7 @@ namespace Gearbox.Tests
                 }
             }
 
-            Directory.Delete(this.root, true);
+            Directory.Delete(this.Root, true);
         }
 
         [TestMethod]
@@ -61,7 +62,7 @@ namespace Gearbox.Tests
         [TestMethod]
         public void Constructor_WithoutResolution_AcceptsMissingFileAndStartsWithEmptyReadOnlyResults()
         {
-            Executable executable = new Executable(Path.Combine(this.root, this.executableName), false);
+            Executable executable = new Executable(Path.Combine(this.Root, this.executableName), false);
             Assert.AreEqual(0, executable.Output.Count);
             Assert.AreEqual(0, executable.Error.Count);
             Assert.IsTrue(executable.Output.IsReadOnly);
@@ -76,9 +77,9 @@ namespace Gearbox.Tests
         public void Constructor_Resolution_FindsAbsoluteAndRelativeDirectFiles(bool relative)
         {
             string path = this.InstallHelper("tools with spaces");
-            this.WithEnvironment(null, this.root, () =>
+            this.WithEnvironment(null, this.Root, () =>
             {
-                string filename = relative ? Path.GetRelativePath(this.root, path) : path;
+                string filename = relative ? Path.GetRelativePath(this.Root, path) : path;
                 Executable executable = new Executable(filename, true);
                 this.AssertIdentity(executable, path);
             });
@@ -91,7 +92,7 @@ namespace Gearbox.Tests
         public void Constructor_MissingOrEmptyPath_ReportsMissingNameButAllowsDirectFile(string? pathValue)
         {
             string path = this.InstallHelper("tools");
-            this.WithEnvironment(pathValue, this.root, () =>
+            this.WithEnvironment(pathValue, this.Root, () =>
             {
                 FileNotFoundException exception = Assert.ThrowsExactly<FileNotFoundException>(
                     () => new Executable(this.executableName, true));
@@ -108,14 +109,14 @@ namespace Gearbox.Tests
         {
             string first = this.InstallHelper("first tools");
             string second = this.InstallHelper("second tools");
-            string[] directories = [Path.Combine(this.root, "missing"), Path.GetDirectoryName(first)!, Path.GetDirectoryName(second)!];
+            string[] directories = [Path.Combine(this.Root, "missing"), Path.GetDirectoryName(first)!, Path.GetDirectoryName(second)!];
             string pathValue = string.Join(Path.PathSeparator, directories);
             if (includeEmptyEntries)
             {
                 pathValue = Path.PathSeparator + pathValue + Path.PathSeparator + Path.PathSeparator;
             }
 
-            this.WithEnvironment(pathValue, this.root, () => this.AssertIdentity(new Executable(this.executableName, true), first));
+            this.WithEnvironment(pathValue, this.Root, () => this.AssertIdentity(new Executable(this.executableName, true), first));
         }
 
         [TestMethod]
@@ -135,11 +136,11 @@ namespace Gearbox.Tests
         public void Constructor_ResolvedFile_RemainsFixedAfterDirectoryAndPathChanges(bool fromPath)
         {
             string path = this.InstallHelper("relative tools");
-            string otherDirectory = Path.Combine(this.root, "other");
+            string otherDirectory = Path.Combine(this.Root, "other");
             Directory.CreateDirectory(otherDirectory);
-            this.WithEnvironment(fromPath ? "relative tools" : null, this.root, () =>
+            this.WithEnvironment(fromPath ? "relative tools" : null, this.Root, () =>
             {
-                string filename = fromPath ? this.executableName : Path.GetRelativePath(this.root, path);
+                string filename = fromPath ? this.executableName : Path.GetRelativePath(this.Root, path);
                 Executable executable = new Executable(filename, true);
                 Directory.SetCurrentDirectory(otherDirectory);
                 Environment.SetEnvironmentVariable("PATH", null);
@@ -154,13 +155,13 @@ namespace Gearbox.Tests
         public void Constructor_WithoutResolution_UsesDirectoryOrPathAtRunTime(bool fromPath)
         {
             string path = this.InstallHelper("tools");
-            string otherDirectory = Path.Combine(this.root, "other");
+            string otherDirectory = Path.Combine(this.Root, "other");
             Directory.CreateDirectory(otherDirectory);
             this.WithEnvironment(null, otherDirectory, () =>
             {
                 string filename = fromPath ? this.executableName : Path.Combine("tools", this.executableName);
                 Executable executable = new Executable(filename, false);
-                Directory.SetCurrentDirectory(this.root);
+                Directory.SetCurrentDirectory(this.Root);
                 Environment.SetEnvironmentVariable("PATH", fromPath ? Path.GetDirectoryName(path) : null);
                 this.AssertIdentity(executable, path);
             });
@@ -174,7 +175,7 @@ namespace Gearbox.Tests
         {
             string filename = "extensionless-probe.exe";
             string path = this.InstallHelper("tools", filename);
-            string currentDirectory = fromPath ? this.root : Path.GetDirectoryName(path)!;
+            string currentDirectory = fromPath ? this.Root : Path.GetDirectoryName(path)!;
             this.WithEnvironment(fromPath ? Path.GetDirectoryName(path) : null, currentDirectory, () =>
             {
                 if (OperatingSystem.IsWindows())
@@ -193,7 +194,7 @@ namespace Gearbox.Tests
         public void Constructor_ExplicitExtension_DoesNotAppendExe()
         {
             string path = this.InstallHelper("tools", "probe.custom.exe");
-            this.WithEnvironment(Path.GetDirectoryName(path), this.root, () =>
+            this.WithEnvironment(Path.GetDirectoryName(path), this.Root, () =>
                 Assert.ThrowsExactly<FileNotFoundException>(() => new Executable("probe.custom", true)));
         }
 
@@ -328,6 +329,11 @@ namespace Gearbox.Tests
         [DataRow("2147483647")]
         public async Task Run_DelayedReaders_WaitsForCompleteCaptureBeforeReturning(string timeout)
         {
+            await this.AssertDelayedReaderProbeAsync(timeout, "sync");
+        }
+
+        private async Task AssertDelayedReaderProbeAsync(string timeout, string method)
+        {
             ProcessStartInfo startInfo = new ProcessStartInfo(HelperPath)
             {
                 UseShellExecute = false,
@@ -336,8 +342,9 @@ namespace Gearbox.Tests
                 RedirectStandardError = true,
             };
             startInfo.ArgumentList.Add("drain-probe");
-            startInfo.ArgumentList.Add(Encode(this.root));
+            startInfo.ArgumentList.Add(Encode(this.Root));
             startInfo.ArgumentList.Add(timeout);
+            startInfo.ArgumentList.Add(method);
             using Process probe = Process.Start(startInfo)!;
             try
             {
@@ -349,6 +356,11 @@ namespace Gearbox.Tests
                 Assert.AreEqual(0, probe.ExitCode, "Reader probe failed: " + output + error);
                 using JsonDocument report = JsonDocument.Parse(output);
                 Assert.IsFalse(report.RootElement.GetProperty("returnedBeforeRelease").GetBoolean());
+                Assert.AreEqual(method == "cancel", report.RootElement.GetProperty("canceled").GetBoolean());
+                if (method == "async-slow-drain")
+                {
+                    Assert.IsTrue(report.RootElement.GetProperty("nativeExitBeforeDeadline").GetBoolean());
+                }
                 CollectionAssert.AreEqual(new[] { "out" }, report.RootElement.GetProperty("output").Deserialize<string[]>()!);
                 CollectionAssert.AreEqual(new[] { "err" }, report.RootElement.GetProperty("error").Deserialize<string[]>()!);
             }
@@ -367,7 +379,7 @@ namespace Gearbox.Tests
         [DataRow(int.MinValue)]
         public void Run_InvalidTimeout_ValidatesBeforeAttemptingMissingExecutable(int timeout)
         {
-            Executable executable = new Executable(Path.Combine(this.root, this.executableName), false);
+            Executable executable = new Executable(Path.Combine(this.Root, this.executableName), false);
             ArgumentOutOfRangeException exception = Assert.ThrowsExactly<ArgumentOutOfRangeException>(
                 () => executable.Run(null, timeout));
             Assert.AreEqual("timeout", exception.ParamName);
@@ -391,7 +403,7 @@ namespace Gearbox.Tests
         {
             string path = this.InstallHelper("zero-timeout");
             Executable executable = new Executable(path, false);
-            Assert.ThrowsExactly<TimeoutException>(() => executable.Run(Arguments("wait", Encode(this.root)), 0));
+            Assert.ThrowsExactly<TimeoutException>(() => executable.Run(Arguments("wait", Encode(this.Root)), 0));
             // A terminated native apphost can be moved immediately on Windows too.
             File.Move(path, path + ".finished");
             File.Move(path + ".finished", path);
@@ -406,14 +418,14 @@ namespace Gearbox.Tests
         {
             Executable executable = new Executable(HelperPath, false);
             string mode = descendants ? "tree" : "wait";
-            Assert.ThrowsExactly<TimeoutException>(() => executable.Run(Arguments(mode, Encode(this.root)), 5000));
-            Assert.IsTrue(File.Exists(Path.Combine(this.root, "ready")), "Child must have started before the timeout.");
+            Assert.ThrowsExactly<TimeoutException>(() => executable.Run(Arguments(mode, Encode(this.Root)), 5000));
+            Assert.IsTrue(File.Exists(Path.Combine(this.Root, "ready")), "Child must have started before the timeout.");
             CollectionAssert.Contains(executable.Output.ToArray(), "parent-out");
             CollectionAssert.Contains(executable.Error.ToArray(), "parent-err");
             this.AssertStopped("parent");
             if (descendants)
             {
-                Assert.IsTrue(File.Exists(Path.Combine(this.root, "child-ready")));
+                Assert.IsTrue(File.Exists(Path.Combine(this.Root, "child-ready")));
                 this.AssertStopped("child");
             }
 
@@ -522,7 +534,7 @@ namespace Gearbox.Tests
 
         private string InstallHelper(string relativeDirectory, string? filename = null)
         {
-            string directory = Path.Combine(this.root, relativeDirectory);
+            string directory = Path.Combine(this.Root, relativeDirectory);
             foreach (string source in Directory.EnumerateFiles(HelperDirectory, "*", SearchOption.AllDirectories))
             {
                 string destination = Path.Combine(directory, Path.GetRelativePath(HelperDirectory, source));
@@ -558,7 +570,7 @@ namespace Gearbox.Tests
 
         private void AssertStopped(string name)
         {
-            string marker = Path.Combine(this.root, name + ".pid");
+            string marker = Path.Combine(this.Root, name + ".pid");
             Assert.IsTrue(File.Exists(marker), "Expected a PID marker for " + name);
             using Process? process = GetMarkedProcess(marker);
             if (process != null)

@@ -46,7 +46,7 @@ namespace Gearbox.TestProcess
                     File.WriteAllText(Path.Combine(Decode(args[1]), "drain-ready"), "ready");
                     return 0;
                 case "drain-probe":
-                    return CheckDelayedReaders(Decode(args[1]), args[2]);
+                    return CheckDelayedReaders(Decode(args[1]), args[2], args.Length > 3 ? args[3] : "sync");
                 default:
                     throw new ArgumentException("Unknown test process mode: " + args[0]);
             }
@@ -131,7 +131,7 @@ namespace Gearbox.TestProcess
             }
         }
 
-        private static int CheckDelayedReaders(string directory, string timeout)
+        private static int CheckDelayedReaders(string directory, string timeout, string method)
         {
             ThreadPool.GetMinThreads(out int oldMinWorkers, out int oldMinIo);
             ThreadPool.GetMaxThreads(out int oldMaxWorkers, out int oldMaxIo);
@@ -139,7 +139,10 @@ namespace Gearbox.TestProcess
             using ManualResetEventSlim runFinished = new ManualResetEventSlim(false);
             using CountdownEvent started = new CountdownEvent(2);
             using CountdownEvent finished = new CountdownEvent(2);
+            using CancellationTokenSource cancellation = new CancellationTokenSource();
             Exception? watcherFailure = null;
+            Stopwatch runWatch = new Stopwatch();
+            bool nativeExitBeforeDeadline = false;
             int readersReleased = 0;
             Thread? watcher = null;
             try
@@ -183,8 +186,21 @@ namespace Gearbox.TestProcess
                             // The child may already have exited and been reaped.
                         }
 
-                        // A correct Run is still waiting for readers after native process exit.
-                        runFinished.Wait(500);
+                        if (method == "cancel")
+                        {
+                            cancellation.Cancel();
+                        }
+
+                        // Hold readers past the deadline while recording that native exit was timely.
+                        int holdReaders = 500;
+                        if (method == "async-slow-drain")
+                        {
+                            int milliseconds = int.Parse(timeout);
+                            nativeExitBeforeDeadline = runWatch.ElapsedMilliseconds < milliseconds;
+                            holdReaders = milliseconds + 500;
+                        }
+
+                        runFinished.Wait(holdReaders);
                     }
                     catch (Exception exception)
                     {
@@ -200,9 +216,31 @@ namespace Gearbox.TestProcess
 
                 Executable executable = new Executable(Environment.ProcessPath!, false);
                 string arguments = "drain-child " + Encode(directory);
-                int exitCode = timeout == "default"
-                    ? executable.Run(arguments)
-                    : executable.Run(arguments, int.Parse(timeout));
+                int exitCode;
+                bool canceled = false;
+                Task<int>? runTask = null;
+                runWatch.Start();
+                try
+                {
+                    if (method == "sync")
+                    {
+                        exitCode = timeout == "default"
+                            ? executable.Run(arguments)
+                            : executable.Run(arguments, int.Parse(timeout));
+                    }
+                    else
+                    {
+                        runTask = timeout == "default"
+                            ? executable.RunAsync(arguments, cancellationToken: cancellation.Token)
+                            : executable.RunAsync(arguments, int.Parse(timeout), cancellation.Token);
+                        exitCode = runTask.GetAwaiter().GetResult();
+                    }
+                }
+                catch (OperationCanceledException exception) when (method == "cancel" && exception.CancellationToken == cancellation.Token)
+                {
+                    canceled = true;
+                    exitCode = 0;
+                }
                 bool returnedBeforeRelease = Volatile.Read(ref readersReleased) == 0;
                 string[] output = executable.Output.ToArray();
                 string[] error = executable.Error.ToArray();
@@ -213,8 +251,10 @@ namespace Gearbox.TestProcess
                     throw new InvalidOperationException("Drain watcher failed.", watcherFailure);
                 }
 
-                Console.WriteLine(JsonSerializer.Serialize(new { exitCode, returnedBeforeRelease, output, error }));
+                Console.WriteLine(JsonSerializer.Serialize(new { exitCode, canceled, nativeExitBeforeDeadline, returnedBeforeRelease, output, error }));
                 return exitCode == 0 && !returnedBeforeRelease
+                    && (method != "async-slow-drain" || nativeExitBeforeDeadline)
+                    && (method == "cancel" ? canceled && runTask!.IsCanceled : !canceled)
                     && output.SequenceEqual(["out"]) && error.SequenceEqual(["err"]) ? 0 : 1;
             }
             finally
