@@ -7,7 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Utils\" />
+    <InternalsVisibleTo Include="Gearbox.Tests" />
   </ItemGroup>
 
 </Project>
