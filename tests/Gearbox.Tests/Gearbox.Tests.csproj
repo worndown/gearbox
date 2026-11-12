@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Gearbox\Gearbox.csproj" />
+    <ProjectReference Include="..\Gearbox.TestProcess\Gearbox.TestProcess.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,5 +23,15 @@
   <ItemGroup>
     <PackageReference Update="MSTest.TestFramework" Version="4.5.3" />
   </ItemGroup>
+
+  <Target Name="CopyTestProcess" AfterTargets="Build">
+    <MSBuild Projects="..\Gearbox.TestProcess\Gearbox.TestProcess.csproj"
+             Targets="GetTestProcessFiles" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="TestProcessFile" />
+    </MSBuild>
+    <Copy SourceFiles="@(TestProcessFile)"
+          DestinationFiles="@(TestProcessFile->'$(TargetDir)test-process\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>
