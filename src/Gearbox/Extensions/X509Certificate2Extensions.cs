@@ -441,18 +441,7 @@ namespace Gearbox.Extensions
             /// <returns>Big integer bytes.</returns>
             private static byte[] GetBigIntegerBytes(BigInteger bi)
             {
-                // .NET 4.6.2 has only one BigInteger constructor receiving byte array.
-                // .NET Core has additional overload allowing to specify byte order and sign.
-                // Since we have to target both we are reversing byte order and setting sign manually.
-                // We also have to remove zero byte used to designate value as positive.
-                byte[] bytes = bi.ToByteArray();
-                if (bytes[bytes.Length - 1] == 0)
-                {
-                    Array.Resize(ref bytes, bytes.Length - 1);
-                }
-
-                Array.Reverse(bytes);
-                return bytes;
+                return bi.ToByteArray(isUnsigned: true, isBigEndian: true);
             }
 
             /// <summary>
