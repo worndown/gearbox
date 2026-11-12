@@ -1,11 +1,11 @@
 ﻿using System.Numerics;
 using System.Security.Cryptography;
-using Gearbox.Extensions;
+using Gearbox.Cryptography;
 
-namespace Gearbox.Tests
+namespace Gearbox.Tests.Cryptography
 {
     [TestClass]
-    public class RsaKeyHelperTest
+    public class RSAKeyTests
     {
         #region PEM encoded RSA keys
 
@@ -846,16 +846,16 @@ namespace Gearbox.Tests
         [TestMethod]
         public void EncodeParametersPem_KnownKeys_ReturnsExpectedPem()
         {
-            string result = X509Certificate2Extensions.RsaKeyHelper.EncodeParametersPem(RsaKey1024);
+            string result = RSAKey.EncodeParametersPem(RsaKey1024);
             Assert.AreEqual(RsaKeyPem1024, result);
 
-            result = X509Certificate2Extensions.RsaKeyHelper.EncodeParametersPem(RsaKey2048);
+            result = RSAKey.EncodeParametersPem(RsaKey2048);
             Assert.AreEqual(RsaKeyPem2048, result);
 
-            result = X509Certificate2Extensions.RsaKeyHelper.EncodeParametersPem(RsaKey4096);
+            result = RSAKey.EncodeParametersPem(RsaKey4096);
             Assert.AreEqual(RsaKeyPem4096, result);
 
-            result = X509Certificate2Extensions.RsaKeyHelper.EncodeParametersPem(RsaKey8192);
+            result = RSAKey.EncodeParametersPem(RsaKey8192);
             Assert.AreEqual(RsaKeyPem8192, result);
         }
 
@@ -874,7 +874,7 @@ namespace Gearbox.Tests
             BigInteger p = new BigInteger(parameters.P, true, true);
             BigInteger q = new BigInteger(parameters.Q, true, true);
 
-            RSAParameters result = X509Certificate2Extensions.RsaKeyHelper.CreateFullKeyParameters(exponent, p, q);
+            RSAParameters result = RSAKey.CreateFullKeyParameters(exponent, p, q);
             CompareRsaParameters(parameters, result);
         }
 
