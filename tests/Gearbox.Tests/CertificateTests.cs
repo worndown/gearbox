@@ -1,12 +1,13 @@
-﻿using System.Security.Cryptography;
+﻿using System.Formats.Asn1;
+using System.Net;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using Gearbox.Extensions;
 
 namespace Gearbox.Tests
 {
-    using System.Security.Cryptography.X509Certificates;
-
     [TestClass]
-    public class CertificateTest
+    public class CertificateTests
     {
         #region PEM encoded certificates
 
@@ -104,25 +105,221 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         #endregion
 
         [TestMethod]
-        public void ChainTest()
+        public void ChainMethodsRejectUntrustedSelfSignedCertificate()
         {
-            string thumb = "213fe6fb6f6c849a0e14c572052ef7f8bb1bd347";
+            using X509Certificate2 cert = CreateCertificate();
 
-            X509Certificate2? cert = Certificate.FindByThumbprint(thumb, StoreName.My, StoreLocation.CurrentUser);
-            if (cert != null)
-            {
-                ICollection<X509Certificate2> chain = cert.BuildIssuerChain();
-            }
+            Assert.IsTrue(cert.IsSelfSigned());
+            Assert.IsFalse(cert.BuildChain());
+            Assert.IsFalse(cert.IsValidCertificate());
+            Assert.Throws<CryptographicException>(() => cert.BuildIssuerChain());
+            Assert.Throws<CryptographicException>(() => cert.BuildIssuerChainPem());
         }
 
         [TestMethod]
         public void CertificateFromPem()
         {
-            X509Certificate2 cert = Certificate.CreateFromPem(CertPem);
+            using X509Certificate2 cert = Certificate.CreateFromPem(CertPem);
             AssertCertificateProperties(cert);
 
-            cert = Certificate.CreateFromPem(CertKeyPem);
-            AssertCertificateProperties(cert);
+            using X509Certificate2 certWithKeyPem = Certificate.CreateFromPem(CertKeyPem);
+            AssertCertificateProperties(certWithKeyPem);
+            Assert.IsFalse(certWithKeyPem.HasPrivateKey);
+        }
+
+        [TestMethod]
+        [DataRow("not a PEM certificate")]
+        [DataRow(Certificate.PemCertFooter)]
+        [DataRow(Certificate.PemCertHeader + "AQID")]
+        [DataRow(Certificate.PemCertFooter + Certificate.PemCertHeader)]
+        [DataRow(Certificate.PemCertHeader + "not base64!" + Certificate.PemCertFooter)]
+        public void CertificateFromPemRejectsMalformedInput(string pem)
+        {
+            Assert.ThrowsExactly<FormatException>(() => Certificate.CreateFromPem(pem));
+        }
+
+        [TestMethod]
+        public void CertificateFromPemRejectsNullAndEmptyInput()
+        {
+            Assert.ThrowsExactly<ArgumentNullException>(() => Certificate.CreateFromPem(null!));
+            Assert.ThrowsExactly<ArgumentException>(() => Certificate.CreateFromPem(string.Empty));
+        }
+
+        [TestMethod]
+        public void CertificateFromPemRejectsNonCertificateData()
+        {
+            string pem = Certificate.PemCertHeader + "\nAQID\n" + Certificate.PemCertFooter;
+
+            Assert.Throws<CryptographicException>(() => Certificate.CreateFromPem(pem));
+        }
+
+        [TestMethod]
+        public void CertificatePemRoundTrip()
+        {
+            using X509Certificate2 original = CreateCertificate();
+            using X509Certificate2 imported = Certificate.CreateFromPem("\n" + original.ExportPem() + "\n");
+
+            CollectionAssert.AreEqual(original.RawData, imported.RawData);
+            Assert.IsFalse(imported.HasPrivateKey);
+        }
+
+        [TestMethod]
+        public void SubjectAltNameGettersPreserveValuesAndOrder()
+        {
+            SubjectAlternativeNameBuilder san = new SubjectAlternativeNameBuilder();
+            san.AddDnsName("first.example.test");
+            san.AddEmailAddress("first@example.test");
+            san.AddUserPrincipalName("last,first@example.test");
+            san.AddIpAddress(IPAddress.Loopback);
+            san.AddDnsName("second.example.test");
+            san.AddUri(new Uri("https://example.test/path"));
+            san.AddEmailAddress("second@example.test");
+            san.AddUserPrincipalName("\u7528\u6237@example.test");
+            san.AddDnsName("first.example.test");
+            san.AddUserPrincipalName("normal@example.test");
+            using X509Certificate2 cert = CreateCertificate(san.Build());
+
+            CollectionAssert.AreEqual(
+                new[] { "first.example.test", "second.example.test", "first.example.test" }, cert.GetDnsName());
+            CollectionAssert.AreEqual(
+                new[] { "first@example.test", "second@example.test" }, cert.GetUserEmailAddress());
+            CollectionAssert.AreEqual(
+                new[] { "last,first@example.test", "\u7528\u6237@example.test", "normal@example.test" }, cert.GetUserPrincipalName());
+        }
+
+        [TestMethod]
+        public void SubjectAltNameGettersIgnoreOtherNameWithUnrelatedOid()
+        {
+            AsnWriter writer = new AsnWriter(AsnEncodingRules.DER);
+            Asn1Tag otherNameTag = new Asn1Tag(TagClass.ContextSpecific, 0, isConstructed: true);
+            using (writer.PushSequence())
+            {
+                foreach (string oid in new[] { "1.2.3.4", "1.3.6.1.4.1.311.20.2.3" })
+                {
+                    using (writer.PushSequence(otherNameTag))
+                    {
+                        writer.WriteObjectIdentifier(oid);
+                        using (writer.PushSequence(otherNameTag))
+                        {
+                            writer.WriteCharacterString(UniversalTagNumber.UTF8String, "user@example.test");
+                        }
+                    }
+                }
+            }
+
+            using X509Certificate2 cert = CreateCertificate(new X509Extension("2.5.29.17", writer.Encode(), false));
+
+            CollectionAssert.AreEqual(new[] { "user@example.test" }, cert.GetUserPrincipalName());
+            Assert.IsEmpty(cert.GetDnsName());
+            Assert.IsEmpty(cert.GetUserEmailAddress());
+        }
+
+        [TestMethod]
+        public void SubjectAltNameGettersReturnEmptyWhenExtensionIsMissing()
+        {
+            using X509Certificate2 cert = CreateCertificate();
+
+            Assert.IsNull(cert.GetSubjectAltName());
+            AssertSubjectAltNamesAreEmpty(cert);
+        }
+
+        [TestMethod]
+        [DataRow("300282")]
+        [DataRow("3003820261")]
+        [DataRow("3000FF")]
+        public void SubjectAltNameGettersReturnEmptyWhenExtensionIsMalformed(string encodedSan)
+        {
+            using X509Certificate2 cert = CreateCertificate(
+                new X509Extension("2.5.29.17", Convert.FromHexString(encodedSan), false));
+
+            AssertSubjectAltNamesAreEmpty(cert);
+        }
+
+        [TestMethod]
+        public void SubjectAltNameGettersDiscardPartialResultsWhenExtensionIsMalformed()
+        {
+            SubjectAlternativeNameBuilder san = new SubjectAlternativeNameBuilder();
+            san.AddDnsName("first.example.test");
+            san.AddEmailAddress("user@example.test");
+            san.AddUserPrincipalName("normal@example.test");
+            byte[] encoded = san.Build().RawData;
+            // The short sequence contains valid entries followed by a truncated DNS name.
+            byte[] malformed = [0x30, (byte)(encoded[1] + 3), .. encoded[2..], 0x82, 0x02, 0x61];
+            using X509Certificate2 cert = CreateCertificate(new X509Extension("2.5.29.17", malformed, false));
+
+            AssertSubjectAltNamesAreEmpty(cert);
+        }
+
+        [TestMethod]
+        public void PrivateKeyPemRoundTripKeepsCertificateKeyUsable()
+        {
+            using X509Certificate2 cert = CreateCertificate();
+            string pem = cert.ExportPrivateKeyPem();
+
+            StringAssert.StartsWith(pem, Certificate.PemRsaKeyHeader);
+            StringAssert.EndsWith(pem, Certificate.PemRsaKeyFooter);
+            using RSA imported = RSA.Create();
+            imported.ImportFromPem(pem);
+            byte[] data = [1, 2, 3, 4];
+            byte[] signature = imported.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            using RSA publicKey = cert.GetRSAPublicKey()!;
+            Assert.IsTrue(publicKey.VerifyData(data, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
+
+            Assert.AreEqual(pem, cert.ExportPrivateKeyPem());
+            using RSA privateKey = cert.GetRSAPrivateKey()!;
+            byte[] secondSignature = privateKey.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            Assert.IsTrue(publicKey.VerifyData(data, secondSignature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
+        }
+
+        [TestMethod]
+        public void PrivateKeyPemRejectsCertificateWithoutPrivateKey()
+        {
+            using X509Certificate2 cert = Certificate.CreateFromPem(CertPem);
+
+            Assert.ThrowsExactly<InvalidOperationException>(() => cert.ExportPrivateKeyPem());
+        }
+
+        [TestMethod]
+        public void PrivateKeyPemRejectsNonRsaCertificate()
+        {
+            using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            CertificateRequest request = new CertificateRequest("CN=ECDSA test", key, HashAlgorithmName.SHA256);
+            using X509Certificate2 cert = request.CreateSelfSigned(
+                DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+
+            Assert.ThrowsExactly<InvalidOperationException>(() => cert.ExportPrivateKeyPem());
+        }
+
+        [TestMethod]
+        [DataRow(-1, 1, false)]
+        [DataRow(-2, -1, true)]
+        [DataRow(1, 2, true)]
+        public void IsExpiredChecksCertificateValidityPeriod(int notBeforeDays, int notAfterDays, bool expected)
+        {
+            using X509Certificate2 cert = CreateCertificate(notBeforeDays: notBeforeDays, notAfterDays: notAfterDays);
+
+            Assert.AreEqual(expected, cert.IsExpired());
+        }
+
+        private static X509Certificate2 CreateCertificate(X509Extension? extension = null, int notBeforeDays = -1, int notAfterDays = 1)
+        {
+            using RSA key = RSA.Create(2048);
+            CertificateRequest request = new CertificateRequest(
+                $"CN=Gearbox test {Guid.NewGuid():N}", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            if (extension != null)
+            {
+                request.CertificateExtensions.Add(extension);
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            return request.CreateSelfSigned(now.AddDays(notBeforeDays), now.AddDays(notAfterDays));
+        }
+
+        private static void AssertSubjectAltNamesAreEmpty(X509Certificate2 cert)
+        {
+            Assert.IsEmpty(cert.GetDnsName());
+            Assert.IsEmpty(cert.GetUserEmailAddress());
+            Assert.IsEmpty(cert.GetUserPrincipalName());
         }
 
         private static void AssertCertificateProperties(X509Certificate2 cert)

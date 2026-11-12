@@ -40,6 +40,7 @@ namespace Gearbox
         /// <param name="thumbprint">Thumbprint to match.</param>
         /// <param name="storeLocation">Store location.</param>
         /// <returns>Certificate with specified thumbprint or null if requested certificate wasn't found.</returns>
+        /// <remarks>The caller must dispose the returned certificate.</remarks>
         public static X509Certificate2? FindByThumbprint(string thumbprint, StoreLocation storeLocation)
         {
             using (X509Store store = new X509Store(storeLocation))
@@ -56,6 +57,7 @@ namespace Gearbox
         /// <param name="storeName">Store name.</param>
         /// <param name="storeLocation">Store location.</param>
         /// <returns>Certificate with specified thumbprint or null if requested certificate wasn't found.</returns>
+        /// <remarks>The caller must dispose the returned certificate.</remarks>
         public static X509Certificate2? FindByThumbprint(string thumbprint, StoreName storeName, StoreLocation storeLocation)
         {
             using (X509Store store = new X509Store(storeName, storeLocation))
@@ -71,6 +73,7 @@ namespace Gearbox
         /// <param name="upn">UPN to match.</param>
         /// <param name="storeLocation">Store location.</param>
         /// <returns>Certificate with the specified UPN or null if requested certificate wasn't found.</returns>
+        /// <remarks>The caller must dispose the returned certificate.</remarks>
         public static X509Certificate2? FindByUpn(string upn, StoreLocation storeLocation)
         {
             using (X509Store store = new X509Store(storeLocation))
@@ -87,6 +90,7 @@ namespace Gearbox
         /// <param name="storeName">Store name.</param>
         /// <param name="storeLocation">Store location.</param>
         /// <returns>Certificate with the specified UPN or null if requested certificate wasn't found.</returns>
+        /// <remarks>The caller must dispose the returned certificate.</remarks>
         public static X509Certificate2? FindByUpn(string upn, StoreName storeName, StoreLocation storeLocation)
         {
             using (X509Store store = new X509Store(storeName, storeLocation))
@@ -102,6 +106,7 @@ namespace Gearbox
         /// <param name="name">Subject name to match.</param>
         /// <param name="storeLocation">Store location.</param>
         /// <returns>Certificate with the specified subject or null if requested certificate wasn't found.</returns>
+        /// <remarks>The caller must dispose the returned certificate.</remarks>
         public static X509Certificate2? FindBySubjectName(string name, StoreLocation storeLocation)
         {
             using (X509Store store = new X509Store(storeLocation))
@@ -118,6 +123,7 @@ namespace Gearbox
         /// <param name="storeName">Store name.</param>
         /// <param name="storeLocation">Store location.</param>
         /// <returns>Certificate with the specified subject name or null if requested certificate wasn't found.</returns>
+        /// <remarks>The caller must dispose the returned certificate.</remarks>
         public static X509Certificate2? FindBySubjectName(string name, StoreName storeName, StoreLocation storeLocation)
         {
             using (X509Store store = new X509Store(storeName, storeLocation))
@@ -134,18 +140,29 @@ namespace Gearbox
         public static string ExportTrustedRootCertificatesPem()
         {
             StringBuilder builder = new StringBuilder(DefaultCapacity * 4);
-            X509Store store = new X509Store(StoreName.Root);
+            using X509Store store = new X509Store(StoreName.Root);
             store.Open(OpenFlags.ReadOnly);
-            foreach (X509Certificate2 cert in store.Certificates)
+            X509Certificate2Collection certificates = store.Certificates;
+            try
             {
-                if (!cert.IsExpired())
+                foreach (X509Certificate2 cert in certificates)
                 {
-                    builder.AppendLine(cert.ExportPem());
-                    builder.AppendLine();
+                    if (!cert.IsExpired())
+                    {
+                        builder.AppendLine(cert.ExportPem());
+                        builder.AppendLine();
+                    }
+                }
+
+                return builder.ToString();
+            }
+            finally
+            {
+                foreach (X509Certificate2 cert in certificates)
+                {
+                    cert.Dispose();
                 }
             }
-
-            return builder.ToString();
         }
 
         /// <summary>
@@ -153,18 +170,24 @@ namespace Gearbox
         /// </summary>
         /// <param name="pem">PEM encoded certificate.</param>
         /// <returns>X.509 certificate instance.</returns>
+        /// <remarks>The caller must dispose the returned certificate. Private keys in the PEM are not imported.</remarks>
         public static X509Certificate2 CreateFromPem(string pem)
         {
             ArgumentException.ThrowIfNullOrEmpty(pem);
 
             int start = pem.IndexOf(PemCertHeader, StringComparison.Ordinal);
-            int end = pem.IndexOf(PemCertFooter, start, StringComparison.Ordinal);
-            if (start < 0 || end < 0)
+            if (start < 0)
             {
                 throw new FormatException("Not a valid PEM encoded certificate.");
             }
 
             start += PemCertHeader.Length;
+            int end = pem.IndexOf(PemCertFooter, start, StringComparison.Ordinal);
+            if (end < 0)
+            {
+                throw new FormatException("Not a valid PEM encoded certificate.");
+            }
+
             byte[] certBytes = Convert.FromBase64String(pem.Substring(start, end - start));
             return X509CertificateLoader.LoadCertificate(certBytes);
         }
@@ -177,16 +200,9 @@ namespace Gearbox
         /// <returns>Certificate with the specified thumbprint or null if certificate wasn't found.</returns>
         private static X509Certificate2? FindCertificateByThumbprint(X509Store store, string thumbprint)
         {
-            foreach (X509Certificate2 certificate in store.Certificates)
-            {
-                if (string.Compare(certificate.Thumbprint, thumbprint, StringComparison.OrdinalIgnoreCase) == 0 &&
-                    certificate.IsValidCertificate())
-                {
-                    return certificate;
-                }
-            }
-
-            return null;
+            return FindCertificate(store,
+                certificate => string.Equals(certificate.Thumbprint, thumbprint, StringComparison.OrdinalIgnoreCase),
+                newestMatch: false);
         }
 
         /// <summary>
@@ -197,21 +213,9 @@ namespace Gearbox
         /// <returns>Certificate with the specified subject name or null if certificate wasn't found.</returns>
         private static X509Certificate2? FindCertificateBySubjectName(X509Store store, string name)
         {
-            X509Certificate2? match = null;
-
-            foreach (X509Certificate2 certificate in store.Certificates)
-            {
-                if (string.Compare(certificate.SubjectName.Name, name, StringComparison.OrdinalIgnoreCase) == 0 &&
-                    certificate.IsValidCertificate())
-                {
-                    if (match == null || certificate.NotBefore > match.NotBefore)
-                    {
-                        match = certificate;
-                    }
-                }
-            }
-
-            return match;
+            return FindCertificate(store,
+                certificate => string.Equals(certificate.SubjectName.Name, name, StringComparison.OrdinalIgnoreCase),
+                newestMatch: true);
         }
 
         /// <summary>
@@ -222,30 +226,50 @@ namespace Gearbox
         /// <returns>Certificate with the specified UPN or null if requested certificate wasn't found.</returns>
         private static X509Certificate2? FindCertificateByUpn(X509Store store, string upn)
         {
-            X509Certificate2? match = null;
+            return FindCertificate(store,
+                certificate => certificate.GetUserPrincipalName().Contains(upn),
+                newestMatch: true);
+        }
 
-            foreach (X509Certificate2 certificate in store.Certificates)
+        /// <summary>
+        /// Finds a valid certificate and disposes every store certificate that is not returned.
+        /// </summary>
+        private static X509Certificate2? FindCertificate(X509Store store, Predicate<X509Certificate2> matches, bool newestMatch)
+        {
+            X509Certificate2Collection certificates = store.Certificates;
+            X509Certificate2? result = null;
+            try
             {
-                List<string> certUpns = certificate.GetUserPrincipalName();
-                if (certUpns.Count == 0)
+                X509Certificate2? match = null;
+                foreach (X509Certificate2 certificate in certificates)
                 {
-                    continue;
-                }
-
-                foreach (string certUpn in certUpns)
-                {
-                    if (certUpn == upn && certificate.IsValidCertificate())
+                    if (matches(certificate) && certificate.IsValidCertificate())
                     {
                         if (match == null || certificate.NotBefore > match.NotBefore)
                         {
                             match = certificate;
+                        }
+
+                        if (!newestMatch)
+                        {
                             break;
                         }
                     }
                 }
-            }
 
-            return match;
+                result = match;
+                return result;
+            }
+            finally
+            {
+                foreach (X509Certificate2 certificate in certificates)
+                {
+                    if (!ReferenceEquals(certificate, result))
+                    {
+                        certificate.Dispose();
+                    }
+                }
+            }
         }
     }
 }

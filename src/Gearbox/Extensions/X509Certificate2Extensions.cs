@@ -1,8 +1,8 @@
 ﻿using System.Numerics;
+using System.Formats.Asn1;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace Gearbox.Extensions
 {
@@ -37,30 +37,9 @@ namespace Gearbox.Extensions
         private const string ClientAuthOid = "1.3.6.1.5.5.7.3.2";
 
         /// <summary>
-        /// Regex for matching alt subject name in format "RFC822 Name=someone@foo.com" and extracting email.
+        /// User principal name otherName OID.
         /// </summary>
-        private static readonly Regex CertEmailRegex = new Regex(
-            @"^\s?RFC822\s+Name\s?=\s?(?<result>.*)$",
-            RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase);
-
-        /// <summary>
-        /// Regex for matching alt subject name in format "DNS Name=server.foo.com" and extracting DNS name.
-        /// </summary>
-        private static readonly Regex CertDnsNameRegex = new Regex(
-            @"^\s?DNS\s+Name\s?=\s?(?<result>.*)$",
-            RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase);
-
-        /// <summary>
-        /// Regex for matching alt subject name in format "Other Name:Principal Name=test@foo.com" and extracting UPN.
-        /// </summary>
-        private static readonly Regex CertUpnRegex = new Regex(
-            @"^\s?Other Name\s?:\s?Principal Name\s?=\s?(?<result>.*)$",
-            RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase);
-
-        /// <summary>
-        /// Regex match group name used below.
-        /// </summary>
-        private const string RegexGroupName = "result";
+        private const string UserPrincipalNameOid = "1.3.6.1.4.1.311.20.2.3";
 
         /// <summary>
         /// Extension methods.
@@ -71,34 +50,34 @@ namespace Gearbox.Extensions
             /// <summary>
             /// Retrieves the UPN of the certificate from SAN, if present.
             /// </summary>
-            /// <returns>List of UPNs found in SAN or empty list.</returns>
+            /// <returns>List of UPNs found in SAN or an empty list if SAN is absent or malformed.</returns>
             public List<string> GetUserPrincipalName()
             {
-                return certificate.GetSubjectAltNameValue(CertUpnRegex);
+                return certificate.GetSubjectAltNameValue(0);
             }
 
             /// <summary>
             /// Retrieves the email address from SAN of the certificate, if present.
             /// </summary>
-            /// <returns>List of email addresses found in SAN or empty list.</returns>
+            /// <returns>List of email addresses found in SAN or an empty list if SAN is absent or malformed.</returns>
             public List<string> GetUserEmailAddress()
             {
-                return certificate.GetSubjectAltNameValue(CertEmailRegex);
+                return certificate.GetSubjectAltNameValue(1);
             }
 
             /// <summary>
             /// Retrieves DNS name from SAN of the certificate, if present.
             /// </summary>
-            /// <returns>List of DNS names found in SAN or empty list.</returns>
+            /// <returns>List of DNS names found in SAN or an empty list if SAN is absent or malformed.</returns>
             public List<string> GetDnsName()
             {
-                return certificate.GetSubjectAltNameValue(CertDnsNameRegex);
+                return certificate.GetSubjectAltNameValue(2);
             }
 
             /// <summary>
-            /// Returns raw Subject Alternative Name value from the certificate.
+            /// Returns the platform-formatted Subject Alternative Name value from the certificate.
             /// </summary>
-            /// <returns>Raw subject alternative name value or null.</returns>
+            /// <returns>Formatted subject alternative name value or null.</returns>
             public string? GetSubjectAltName()
             {
                 foreach (X509Extension extension in certificate.Extensions)
@@ -113,9 +92,9 @@ namespace Gearbox.Extensions
             }
 
             /// <summary>
-            /// Checks if the certificate has not expired.
+            /// Checks if the certificate is expired or is not yet valid.
             /// </summary>
-            /// <returns>True if the certificate has not expired.</returns>
+            /// <returns>True if the current time is outside the certificate's validity period.</returns>
             public bool IsExpired()
             {
                 DateTime now = DateTime.UtcNow;
@@ -123,9 +102,10 @@ namespace Gearbox.Extensions
             }
 
             /// <summary>
-            /// Checks of certificate is self-singed.
+            /// Checks if the certificate's subject and issuer names are identical.
             /// </summary>
-            /// <returns>true if certificate is self-signed; false otherwise.</returns>
+            /// <returns>true if the subject and issuer names match; false otherwise.</returns>
+            /// <remarks>This compares names without verifying the certificate's signature.</remarks>
             public bool IsSelfSigned()
             {
                 return certificate.SubjectName.RawData.SequenceEqual(certificate.IssuerName.RawData);
@@ -181,13 +161,13 @@ namespace Gearbox.Extensions
             /// Checks if certificate has client authentication usage.
             /// </summary>
             /// <returns>true if certificate has client authentication usage; false otherwise.</returns>
-            public  bool HasClientAuthenticationUsage()
+            public bool HasClientAuthenticationUsage()
             {
                 return certificate.HasEnhancedKeyUsage(ClientAuthOid);
             }
 
             /// <summary>
-            /// Determines of certificate had specified enhanced key usage. 
+            /// Determines if the certificate has the specified enhanced key usage.
             /// </summary>
             /// <param name="usageOid">Enhanced usage OID.</param>
             /// <returns>true if certificate has specified enhanced usage; false otherwise.</returns>
@@ -215,7 +195,8 @@ namespace Gearbox.Extensions
             /// Builds the chain for the specified certificate and throws exception in case of error.
             /// The certificate itself is not included in the chain unless it is self-signed.
             /// </summary>
-            /// <returns>Chains of issuer certificates.</returns>
+            /// <returns>Chain of issuer certificates.</returns>
+            /// <remarks>The caller must dispose each returned certificate.</remarks>
             public ICollection<X509Certificate2> BuildIssuerChain()
             {
                 using (X509Chain x509Chain = new X509Chain(true))
@@ -246,7 +227,7 @@ namespace Gearbox.Extensions
             }
 
             /// <summary>
-            /// Builds the chain for the specified certificate and encoded it in PEM format.
+            /// Builds the chain for the specified certificate and encodes it in PEM format.
             /// The certificate itself is not included in the chain unless it is self-signed.
             /// </summary>
             /// <returns>PEM encoded certificate chain.</returns>
@@ -254,12 +235,22 @@ namespace Gearbox.Extensions
             {
                 StringBuilder builder = new StringBuilder(DefaultCapacity * 2);
                 ICollection<X509Certificate2> chain = certificate.BuildIssuerChain();
-                foreach (X509Certificate2 cert in chain)
+                try
                 {
-                    builder.AppendLine(cert.ExportPem());
-                }
+                    foreach (X509Certificate2 cert in chain)
+                    {
+                        builder.AppendLine(cert.ExportPem());
+                    }
 
-                return builder.ToString();
+                    return builder.ToString();
+                }
+                finally
+                {
+                    foreach (X509Certificate2 cert in chain)
+                    {
+                        cert.Dispose();
+                    }
+                }
             }
 
             /// <summary>
@@ -281,50 +272,99 @@ namespace Gearbox.Extensions
             /// <returns>String containing private key in PEM format.</returns>
             public string ExportPrivateKeyPem()
             {
-                // We expect certificate to contain private key and it should be RSA
-                RSAParameters rsaParameters = default;
-                RSA? rsa = certificate.GetRSAPrivateKey();
+                using RSA? rsa = certificate.GetRSAPrivateKey();
                 if (rsa == null)
                 {
                     throw new InvalidOperationException("RSA key is expected.");
                 }
 
-                rsaParameters = rsa.ExportParameters(true);
-                string pem = RsaKeyHelper.EncodeParametersPem(rsaParameters);
-                X509Certificate2.ClearRsaParameters(rsaParameters);
-                return pem;
+                RSAParameters rsaParameters = rsa.ExportParameters(true);
+                try
+                {
+                    return RsaKeyHelper.EncodeParametersPem(rsaParameters);
+                }
+                finally
+                {
+                    X509Certificate2.ClearRsaParameters(rsaParameters);
+                }
             }
 
             /// <summary>
-            /// Gets subject alternative name value matching supplied regex.
+            /// Decodes subject alternative names directly from the DER-encoded extension.
             /// </summary>
-            /// <param name="regex">The regex.</param>
-            /// <returns>Matching value(s) or empty list.</returns>
-            private List<string> GetSubjectAltNameValue(Regex regex)
+            /// <param name="nameType">GeneralName tag: 0 for UPN, 1 for email, or 2 for DNS.</param>
+            /// <returns>Matching values or an empty list if SAN is absent or malformed.</returns>
+            private List<string> GetSubjectAltNameValue(int nameType)
             {
                 List<string> result = new List<string>();
-                string? san = certificate.GetSubjectAltName();
-                if (!string.IsNullOrEmpty(san))
+                X509Extension? extension = certificate.Extensions[SubjectAltNameOid];
+                if (extension == null)
                 {
-                    // It is possible to have multiple SAN values separated by ','
-                    string[] altNames = san.Split(',');
-                    foreach (string altName in altNames)
+                    return result;
+                }
+
+                try
+                {
+                    AsnReader reader = new AsnReader(extension.RawData, AsnEncodingRules.DER);
+                    AsnReader names = reader.ReadSequence();
+                    reader.ThrowIfNotEmpty();
+                    while (names.HasData)
                     {
-                        string value = altName.Trim();
-                        Match match = regex.Match(value);
-                        if (match.Success)
+                        Asn1Tag tag = names.PeekTag();
+                        if (tag.TagClass != TagClass.ContextSpecific || tag.TagValue > 8)
                         {
-                            string val = match.Groups[RegexGroupName].Value;
-                            result.Add(val.Trim());
+                            throw new AsnContentException();
+                        }
+
+                        if (tag.TagValue == 1 || tag.TagValue == 2)
+                        {
+                            string value = names.ReadCharacterString(
+                                UniversalTagNumber.IA5String,
+                                new Asn1Tag(TagClass.ContextSpecific, tag.TagValue));
+                            if (tag.TagValue == nameType)
+                            {
+                                result.Add(value);
+                            }
+                        }
+                        else if (tag.TagValue == 0)
+                        {
+                            Asn1Tag otherNameTag = new Asn1Tag(TagClass.ContextSpecific, 0, isConstructed: true);
+                            AsnReader otherName = names.ReadSequence(otherNameTag);
+                            string oid = otherName.ReadObjectIdentifier();
+                            AsnReader value = otherName.ReadSequence(otherNameTag);
+                            if (oid == UserPrincipalNameOid)
+                            {
+                                string upn = value.ReadCharacterString(UniversalTagNumber.UTF8String);
+                                if (nameType == 0)
+                                {
+                                    result.Add(upn);
+                                }
+                            }
+                            else
+                            {
+                                value.ReadEncodedValue();
+                            }
+
+                            value.ThrowIfNotEmpty();
+                            otherName.ThrowIfNotEmpty();
+                        }
+                        else
+                        {
+                            names.ReadEncodedValue();
                         }
                     }
+                }
+                catch (AsnContentException)
+                {
+                    // A malformed extension must not return partially decoded names.
+                    return [];
                 }
 
                 return result;
             }
 
             /// <summary>
-            /// Overwrites all values with zeros and then clears them.
+            /// Overwrites all RSA parameter buffers with zeros.
             /// </summary>
             /// <param name="parameters">The RSAParameters instance.</param>
             private static void ClearRsaParameters(RSAParameters parameters)
@@ -347,10 +387,7 @@ namespace Gearbox.Extensions
             {
                 if (prop is not null)
                 {
-                    for (int i = 0; i < prop.Length; ++i)
-                    {
-                        prop[i] = 0;
-                    }
+                    CryptographicOperations.ZeroMemory(prop);
                 }
             }
         }
@@ -368,11 +405,18 @@ namespace Gearbox.Extensions
             public static string EncodeParametersPem(RSAParameters rsaParameters)
             {
                 byte[] sequence = EncodeRsaPrivateKey(rsaParameters);
-                StringBuilder builder = new StringBuilder(512);
-                builder.AppendLine(Certificate.PemRsaKeyHeader);
-                builder.AppendLine(Convert.ToBase64String(sequence, Base64FormattingOptions.InsertLineBreaks));
-                builder.Append(Certificate.PemRsaKeyFooter);
-                return builder.ToString();
+                try
+                {
+                    StringBuilder builder = new StringBuilder(512);
+                    builder.AppendLine(Certificate.PemRsaKeyHeader);
+                    builder.AppendLine(Convert.ToBase64String(sequence, Base64FormattingOptions.InsertLineBreaks));
+                    builder.Append(Certificate.PemRsaKeyFooter);
+                    return builder.ToString();
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(sequence);
+                }
             }
 
             /// <summary>
@@ -523,24 +567,30 @@ namespace Gearbox.Extensions
                 using (MemoryStream ms = new MemoryStream())
                 using (BinaryWriter writer = new BinaryWriter(ms))
                 {
-                    writer.Write((byte)0x30); // Sequence start
-                    EncodeIntegerSize(writer, approxSequenceLen); // Sequence length
-                    EncodeIntegerValue(writer, [0]); // Version
-                    EncodeIntegerValue(writer, rsa.Modulus);
-                    EncodeIntegerValue(writer, rsa.Exponent);
-                    EncodeIntegerValue(writer, rsa.D);
-                    EncodeIntegerValue(writer, rsa.P);
-                    EncodeIntegerValue(writer, rsa.Q);
-                    EncodeIntegerValue(writer, rsa.DP);
-                    EncodeIntegerValue(writer, rsa.DQ);
-                    EncodeIntegerValue(writer, rsa.InverseQ);
+                    try
+                    {
+                        writer.Write((byte)0x30); // Sequence start
+                        EncodeIntegerSize(writer, approxSequenceLen); // Sequence length
+                        EncodeIntegerValue(writer, [0]); // Version
+                        EncodeIntegerValue(writer, rsa.Modulus);
+                        EncodeIntegerValue(writer, rsa.Exponent);
+                        EncodeIntegerValue(writer, rsa.D);
+                        EncodeIntegerValue(writer, rsa.P);
+                        EncodeIntegerValue(writer, rsa.Q);
+                        EncodeIntegerValue(writer, rsa.DP);
+                        EncodeIntegerValue(writer, rsa.DQ);
+                        EncodeIntegerValue(writer, rsa.InverseQ);
 
-                    byte[] buffer = ms.ToArray();
+                        byte[] buffer = ms.ToArray();
 
-                    // Our initial sequence length may is probably incorrect due to padding.
-                    // Fix it before returning.
-                    UpdateSequenceSize(buffer);
-                    return buffer;
+                        // Correct the initial sequence length after padding is known.
+                        UpdateSequenceSize(buffer);
+                        return buffer;
+                    }
+                    finally
+                    {
+                        CryptographicOperations.ZeroMemory(ms.GetBuffer());
+                    }
                 }
             }
 
