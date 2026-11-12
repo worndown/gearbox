@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/Gearbox/Gearbox.csproj" Id="45639e0b-2700-47f0-a857-2e51f8c49768" />
+  <Project Path="tests/Gearbox.Tests/Gearbox.Tests.csproj" Id="78e3466d-0b07-432b-8332-c3fbf72614ee" />
+</Solution>
