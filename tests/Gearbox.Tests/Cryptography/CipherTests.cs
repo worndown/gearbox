@@ -10,7 +10,7 @@ namespace Gearbox.Tests.Cryptography
         private static readonly byte[] AssociatedData = { 1, 2, 3 };
 
         [TestMethod]
-        public void Decrypt_MatchesAes256GcmKnownAnswer()
+        public void Decrypt_NistAes256GcmVector_ReturnsKnownPlaintext()
         {
             // NIST AES-256-GCM vector: zero key, 96-bit zero nonce, one zero plaintext block, no AAD.
             byte[] blob = Convert.FromHexString(
@@ -28,7 +28,7 @@ namespace Gearbox.Tests.Cryptography
         [DataRow(16)]
         [DataRow(17)]
         [DataRow(1024)]
-        public void Encrypt_InteroperatesWithBcl(int length)
+        public void Encrypt_VariedPlaintextLengths_InteroperatesWithBcl(int length)
         {
             byte[] plainText = Enumerable.Range(0, length).Select(i => (byte)i).ToArray();
             byte[] original = (byte[])plainText.Clone();
@@ -50,7 +50,7 @@ namespace Gearbox.Tests.Cryptography
         [DataRow(16)]
         [DataRow(17)]
         [DataRow(1024)]
-        public void Decrypt_InteroperatesWithBcl(int length)
+        public void Decrypt_BclCiphertext_RecoversPlaintext(int length)
         {
             byte[] plainText = Enumerable.Range(0, length).Select(i => (byte)i).ToArray();
             byte[] blob = new byte[28 + length];
@@ -116,7 +116,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void NullInputs_Throw()
+        public void ConstructorAndMethods_NullInputs_ThrowArgumentNullException()
         {
             Assert.ThrowsExactly<ArgumentNullException>(() => new Cipher((byte[])null!));
             Assert.ThrowsExactly<ArgumentNullException>(() => new Cipher((DeriveBytes)null!));
@@ -146,7 +146,7 @@ namespace Gearbox.Tests.Cryptography
         [DataRow(16)]
         [DataRow(24)]
         [DataRow(32)]
-        public void Constructor_CopiesCallerKey(int length)
+        public void Constructor_CallerKeyMutation_KeepsIndependentKeyCopy(int length)
         {
             byte[] callerKey = Key[..length];
             byte[] original = (byte[])callerKey.Clone();
@@ -162,7 +162,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void EncryptAfterDispose_Throws()
+        public void Encrypt_DisposedCipher_ThrowsObjectDisposedException()
         {
             using Cipher cipher = PBES2.CreateCipher("password", new byte[8], 2, null, CancellationToken.None);
             cipher.Dispose();
@@ -171,7 +171,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void DecryptAfterDispose_RejectsZeroKeyForgery()
+        public void Decrypt_DisposedCipher_RejectsZeroKeyForgery()
         {
             byte[] forgedBlob = new byte[31];
             using (AesGcm aes = new AesGcm(new byte[32], 16))
@@ -186,7 +186,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void Constructor_ClearsTemporaryDerivedKey()
+        public void Constructor_DerivedKey_ClearsTemporaryKey()
         {
             using TrackingDeriveBytes pbkdf2 = new TrackingDeriveBytes();
             using Cipher cipher = new Cipher(pbkdf2);
@@ -196,7 +196,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void ConstructorFailure_ClearsTemporaryDerivedKey()
+        public void Constructor_InvalidDerivedKey_ClearsTemporaryKey()
         {
             using TrackingDeriveBytes pbkdf2 = new TrackingDeriveBytes { ReturnedLength = 15 };
 

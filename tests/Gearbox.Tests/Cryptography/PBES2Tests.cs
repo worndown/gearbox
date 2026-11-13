@@ -12,7 +12,7 @@ namespace Gearbox.Tests.Cryptography
         /// derived again from the same password, salt and iterations.
         /// </summary>
         [TestMethod]
-        public void KeyDerivation()
+        public void CreateCipher_RepeatedDerivation_RoundTripsPlaintext()
         {
             string password = GetRandomPassword();
             int iterations = GetRandomIterationCount();
@@ -33,7 +33,7 @@ namespace Gearbox.Tests.Cryptography
         /// proving a fresh random nonce is used per call.
         /// </summary>
         [TestMethod]
-        public void Encryption_IsNonDeterministic()
+        public void Encrypt_IdenticalPlaintext_ReturnsDifferentCiphertext()
         {
             string password = GetRandomPassword();
             int iterations = GetRandomIterationCount();
@@ -59,7 +59,7 @@ namespace Gearbox.Tests.Cryptography
         /// interoperate: one can decrypt data encrypted by the other.
         /// </summary>
         [TestMethod]
-        public void Cipher_SameSettings_Interoperate()
+        public void CreateCipher_IdenticalSettings_CreatesInteroperableCiphers()
         {
             string password = GetRandomPassword();
             int iterations = GetRandomIterationCount();
@@ -146,7 +146,7 @@ namespace Gearbox.Tests.Cryptography
         [DataRow("", 1)]
         [DataRow("päss\0密碼🔑", 2)]
         [DataRow("password", 199)]
-        public void CreateCipher_MatchesBclKeyDerivation(string password, int iterations)
+        public void CreateCipher_VariedPasswordsAndIterations_MatchesBclKeyDerivation(string password, int iterations)
         {
             byte[] salt = Enumerable.Range(0, 16).Select(i => (byte)i).ToArray();
             using Cipher cipher = PBES2.CreateCipher(password, salt, iterations, null, CancellationToken.None);
@@ -158,7 +158,7 @@ namespace Gearbox.Tests.Cryptography
         [DataRow("", 1)]
         [DataRow("päss\0密碼🔑", 2)]
         [DataRow("password", 199)]
-        public async Task CreateCipherAsync_MatchesBclKeyDerivation(string password, int iterations)
+        public async Task CreateCipherAsync_VariedPasswordsAndIterations_MatchesBclKeyDerivation(string password, int iterations)
         {
             byte[] salt = Enumerable.Range(0, 16).Select(i => (byte)i).ToArray();
             using Cipher cipher = await PBES2.CreateCipherAsync(password, salt, iterations, null, CancellationToken.None);
@@ -217,7 +217,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public async Task CreateCipherAsync_PreCanceledToken_MultipleIterations_CancelsTask()
+        public async Task CreateCipherAsync_PreCanceledTokenWithMultipleIterations_CancelsTask()
         {
             CancellationToken token = new CancellationToken(true);
             Task<Cipher> task = PBES2.CreateCipherAsync("password", new byte[8], 2, null, token);
@@ -248,7 +248,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void CreateCipher_PreCanceledToken_OneIteration_Throws()
+        public void CreateCipher_PreCanceledTokenWithOneIteration_ThrowsOperationCanceledException()
         {
             Assert.ThrowsExactly<OperationCanceledException>(() =>
             {
@@ -257,7 +257,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public async Task CreateCipherAsync_PreCanceledToken_OneIteration_Throws()
+        public async Task CreateCipherAsync_PreCanceledTokenWithOneIteration_ThrowsOperationCanceledException()
         {
             await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             {

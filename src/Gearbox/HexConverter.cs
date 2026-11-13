@@ -1,189 +1,131 @@
-﻿using System.Runtime.CompilerServices;
-using System.Text;
-
-namespace Gearbox
+﻿namespace Gearbox
 {
     /// <summary>
-    /// Converts between hexadecimal string to byte array and the other way around.
+    /// Converts between hexadecimal strings and byte arrays.
     /// </summary>
     public static class HexConverter
     {
-        /// <summary>
-        /// Nibble to hex character lookup.
-        /// </summary>
-        private static readonly byte[] NibbleToHex = Encoding.ASCII.GetBytes("0123456789ABCDEF");
+        private const string HexDigits = "0123456789ABCDEF";
 
         /// <summary>
-        /// Lookup table for converting ASCII character to the actual hex value.
+        /// Converts a hexadecimal string to a byte array.
         /// </summary>
-        private static readonly byte[] AsciiToHexMap =
-        [
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
-        ];
-
-        /// <summary>
-        /// Converts the hex string to a binary array.
-        /// </summary>
-        /// <param name="hexString">Hex string to convert.</param>
-        /// <returns>A byte[] containing the hex bytes.</returns>
+        /// <param name="hexString">An even-length string of hexadecimal digits, in either case.</param>
+        /// <returns>The resulting byte array.</returns>
+        /// <exception cref="ArgumentNullException"><paramref name="hexString"/> is null.</exception>
+        /// <exception cref="FormatException">The string has an odd length or contains non-hexadecimal characters.</exception>
         public static byte[] ToByteArray(string hexString)
         {
-            return ToByteArray(hexString, 0, hexString.Length);
+            ArgumentNullException.ThrowIfNull(hexString);
+            return Convert.FromHexString(hexString);
         }
 
         /// <summary>
-        /// Converts a hex string to a byte array.
+        /// Converts a range of a hexadecimal string to a byte array.
         /// </summary>
-        /// <param name="hexString">Hex string to convert.</param>
+        /// <param name="hexString">The string to convert.</param>
         /// <param name="pos">String position to start conversion from.</param>
-        /// <param name="count">Number of characters to convert.</param>
+        /// <param name="count">Number of characters to convert. Must be even.</param>
         /// <returns>The resulting byte array.</returns>
+        /// <exception cref="ArgumentNullException"><paramref name="hexString"/> is null.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">The position or count is outside the string.</exception>
+        /// <exception cref="FormatException">The selected range has an odd length or contains non-hexadecimal characters.</exception>
         public static byte[] ToByteArray(string hexString, int pos, int count)
         {
-            if (count == 0)
-            {
-                return [];
-            }
+            ArgumentNullException.ThrowIfNull(hexString);
+            ArgumentOutOfRangeException.ThrowIfNegative(pos);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(pos, hexString.Length);
+            ArgumentOutOfRangeException.ThrowIfNegative(count);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(count, hexString.Length - pos);
 
-            if (count % 2 != 0)
-            {
-                throw new FormatException("Invalid hexadecimal string.");
-            }
-
-            int arrayLength = count / 2;
-            byte[] array = new byte[arrayLength];
-
-            for (int i = 0; i < arrayLength; ++i)
-            {
-                array[i] = ByteFromHexPair(hexString[pos++], hexString[pos++]);
-            }
-
-            return array;
+            return Convert.FromHexString(hexString.AsSpan(pos, count));
         }
 
         /// <summary>
-        /// Converts a byte array into a hex string.
+        /// Converts a byte array into an uppercase hexadecimal string.
         /// </summary>
         /// <param name="array">The byte array to convert.</param>
-        /// <returns>The resulting hex string.</returns>
+        /// <returns>The resulting hexadecimal string.</returns>
+        /// <exception cref="ArgumentNullException"><paramref name="array"/> is null.</exception>
         public static string ToHexString(byte[] array)
         {
-            return ToHexString(array, 0, array?.Length ?? 0);
+            ArgumentNullException.ThrowIfNull(array);
+            return Convert.ToHexString(array);
         }
 
         /// <summary>
-        /// Converts a byte array into a hex string.
+        /// Converts a range of a byte array into an uppercase hexadecimal string.
         /// </summary>
         /// <param name="array">The byte array to convert.</param>
         /// <param name="offset">Array offset to start conversion from.</param>
         /// <param name="count">Number of bytes to convert.</param>
-        /// <returns>The resulting hex string.</returns>
+        /// <returns>The resulting hexadecimal string.</returns>
+        /// <exception cref="ArgumentNullException"><paramref name="array"/> is null.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">The offset or count is outside the array.</exception>
         public static string ToHexString(byte[] array, int offset, int count)
         {
             ArgumentNullException.ThrowIfNull(array);
+            ArgumentOutOfRangeException.ThrowIfNegative(offset);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(offset, array.Length);
+            ArgumentOutOfRangeException.ThrowIfNegative(count);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(count, array.Length - offset);
 
-            if (count == 0)
-            {
-                return string.Empty;
-            }
-
-            byte[] encodedData = new byte[count * 2];
-            int encodedIndex = 0;
-
-            for (int i = offset; i < offset + count; ++i)
-            {
-                encodedData[encodedIndex++] = NibbleToHex[array[i] >> 4];
-                encodedData[encodedIndex++] = NibbleToHex[array[i] & 0xF];
-            }
-
-            return Encoding.ASCII.GetString(encodedData, 0, encodedData.Length);
+            return Convert.ToHexString(array.AsSpan(offset, count));
         }
 
         /// <summary>
-        /// Converts a byte array into escaped hex string.
+        /// Converts a byte array into uppercase hexadecimal pairs separated by a character.
         /// </summary>
         /// <param name="array">The byte array to convert.</param>
-        /// <param name="escapeChar">The escape character to use.</param>
-        /// <returns>The resulting hex string.</returns>
+        /// <param name="escapeChar">The character to insert between pairs, with no leading or trailing separator.</param>
+        /// <returns>The resulting hexadecimal string.</returns>
+        /// <exception cref="ArgumentNullException"><paramref name="array"/> is null.</exception>
         public static string ToEscapedHexString(byte[] array, char escapeChar)
         {
-            return ToEscapedHexString(array, 0, array?.Length ?? 0, escapeChar);
+            ArgumentNullException.ThrowIfNull(array);
+            return ToEscapedHexString(array, 0, array.Length, escapeChar);
         }
 
         /// <summary>
-        /// Converts a byte array into escaped hex string.
+        /// Converts a range of a byte array into uppercase hexadecimal pairs separated by a character.
         /// </summary>
         /// <param name="array">The byte array to convert.</param>
         /// <param name="offset">Array offset to start conversion from.</param>
         /// <param name="count">Number of bytes to convert.</param>
-        /// <param name="escapeChar">The escape character to use.</param>
-        /// <returns>The resulting escaped hex string.</returns>
+        /// <param name="escapeChar">The character to insert between pairs, with no leading or trailing separator.</param>
+        /// <returns>The resulting hexadecimal string.</returns>
+        /// <exception cref="ArgumentNullException"><paramref name="array"/> is null.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">The offset or count is outside the array.</exception>
+        /// <exception cref="OverflowException">The resulting string length exceeds <see cref="int.MaxValue"/>.</exception>
         public static string ToEscapedHexString(byte[] array, int offset, int count, char escapeChar)
         {
+            ArgumentNullException.ThrowIfNull(array);
+            ArgumentOutOfRangeException.ThrowIfNegative(offset);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(offset, array.Length);
+            ArgumentOutOfRangeException.ThrowIfNegative(count);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(count, array.Length - offset);
+
             if (count == 0)
             {
                 return string.Empty;
             }
 
-            byte[] encodedData = new byte[count * 3 - 1];
-            int encodedIndex = 0;
-
-            for (int i = offset; i < offset + count; ++i)
+            int stringLength = checked((int)(count * 3L - 1));
+            return string.Create(stringLength, (array, offset, count, escapeChar), static (characters, state) =>
             {
-                if (encodedIndex > 0)
+                int encodedIndex = 0;
+                for (int i = 0; i < state.count; ++i)
                 {
-                    encodedData[encodedIndex++] = (byte)escapeChar;
+                    if (i > 0)
+                    {
+                        characters[encodedIndex++] = state.escapeChar;
+                    }
+
+                    byte value = state.array[state.offset + i];
+                    characters[encodedIndex++] = HexDigits[value >> 4];
+                    characters[encodedIndex++] = HexDigits[value & 0xF];
                 }
-
-                encodedData[encodedIndex++] = NibbleToHex[array[i] >> 4];
-                encodedData[encodedIndex++] = NibbleToHex[array[i] & 0xF];
-            }
-
-            return Encoding.ASCII.GetString(encodedData, 0, encodedData.Length);
-        }
-
-        /// <summary>
-        /// Converts hex character pair into a corresponding byte value.
-        /// </summary>
-        /// <param name="firstChar">The first hex character.</param>
-        /// <param name="secondChar">The second hex character.</param>
-        /// <returns>The byte value.</returns>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static byte ByteFromHexPair(char firstChar, char secondChar)
-        {
-            byte b1 = ByteFromHexChar(firstChar);
-            byte b2 = ByteFromHexChar(secondChar);
-            return (byte)((b1 << 4) | b2);
-        }
-
-        /// <summary>
-        /// Converts hex character into its byte value.
-        /// </summary>
-        /// <param name="ch">The hex character.</param>
-        /// <returns>The byte value.</returns>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static byte ByteFromHexChar(char ch)
-        {
-            // Make sure resulting character is within ASCII range
-            byte result = ch < 128 ? AsciiToHexMap[ch] : (byte)0xFF;
-            return result != 0xFF
-                ? result
-                : throw new FormatException("Invalid hexadecimal string.");
+            });
         }
     }
 }

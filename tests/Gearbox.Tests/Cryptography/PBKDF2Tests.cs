@@ -22,7 +22,7 @@ namespace Gearbox.Tests.Cryptography
         [DataRow("p", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, 2, 10)]
         [DataRow("test@pass123", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, 100, 128)]
         [DataRow("AnotherPa$$word", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 }, 100, 222)]
-        public void DeriveKey_ExplicitSalt(string password, byte[] salt, int iterations, int keyLength)
+        public void GetBytes_ExplicitSalt_ReturnsSameKeyOnRepeatedDerivation(string password, byte[] salt, int iterations, int keyLength)
         {
             byte[] key1 = DeriveKey(password, salt, iterations, keyLength);
             Assert.IsNotNull(key1);
@@ -47,7 +47,7 @@ namespace Gearbox.Tests.Cryptography
         [DataRow("p", 8, 2, 10)]
         [DataRow("test@pass123", 16, 100, 128)]
         [DataRow("AnotherPa$$word", 64, 100, 222)]
-        public void DeriveKey_RandomSalt(string password, int saltLen, int iterations, int keyLength)
+        public void GetBytes_GeneratedSalt_ReproducesKeyUsingSameSalt(string password, int saltLen, int iterations, int keyLength)
         {
             byte[] key1 = DeriveKey(password, saltLen, iterations, keyLength, out byte[] salt);
             Assert.IsNotNull(key1);
@@ -71,7 +71,7 @@ namespace Gearbox.Tests.Cryptography
         [DataRow("p", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, 2)]
         [DataRow("test@pass123", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, 100)]
         [DataRow("AnotherPa$$word", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 }, 100)]
-        public void DeriveKey_Sequential(string password, byte[] salt, int iterations)
+        public void GetBytes_SequentialChunks_MatchesSingleRequest(string password, byte[] salt, int iterations)
         {
             // Desired key size
             const int keySize = 1000;
@@ -110,7 +110,7 @@ namespace Gearbox.Tests.Cryptography
         [DataRow("p", 8, 2)]
         [DataRow("test@pass123", 16, 100)]
         [DataRow("AnotherPa$$word", 64, 100)]
-        public void ResetState(string password, int saltLen, int iterations)
+        public void Reset_AfterFullBlocks_RestartsKeySequence(string password, int saltLen, int iterations)
         {
             const int blockSize = 64;
 
@@ -135,7 +135,7 @@ namespace Gearbox.Tests.Cryptography
         /// Tests that exception is thrown when small salt length is specified.
         /// </summary>
         [TestMethod]
-        public void Salt_SmallLength_ThrowsException()
+        public void Constructor_ShortSaltLength_ThrowsArgumentOutOfRangeException()
         {
             Assert.Throws<ArgumentOutOfRangeException>(() => new PBKDF2("secret", 7));
         }
@@ -144,7 +144,7 @@ namespace Gearbox.Tests.Cryptography
         /// Tests that exception is thrown when provided salt is not big enough.
         /// </summary>
         [TestMethod]
-        public void Salt_BadValue_ThrowsException()
+        public void Constructor_ShortSaltArray_ThrowsArgumentException()
         {
             Assert.Throws<ArgumentException>(() => new PBKDF2("secret", new byte[] { 1, 2, 3, 4, 5, 6, 7 }));
         }
@@ -153,7 +153,7 @@ namespace Gearbox.Tests.Cryptography
         /// Tests that exception is thrown when null salt value is provided.
         /// </summary>
         [TestMethod]
-        public void Salt_NullValue_ThrowsException()
+        public void Constructor_NullSalt_ThrowsArgumentNullException()
         {
             Assert.Throws<ArgumentNullException>(() => new PBKDF2("secret", null!));
         }
@@ -162,7 +162,7 @@ namespace Gearbox.Tests.Cryptography
         /// Tests that exception is thrown when null password value is provided.
         /// </summary>
         [TestMethod]
-        public void Password_NullValue_ThrowsException()
+        public void Constructor_NullStringPassword_ThrowsArgumentNullException()
         {
             Assert.Throws<ArgumentNullException>(() => new PBKDF2(null!, 16));
         }
@@ -180,7 +180,7 @@ namespace Gearbox.Tests.Cryptography
         [DataRow("", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, 1, 32)]
         [DataRow("password", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, 1000, 64)]
         [DataRow("test@pass123", new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }, 500, 100)]
-        public void DeriveKey_MatchesBclReference(string password, byte[] salt, int iterations, int keyLength)
+        public void GetBytes_StringPassword_MatchesBclReference(string password, byte[] salt, int iterations, int keyLength)
         {
             byte[] expected = Rfc2898DeriveBytes.Pbkdf2(
                 Encoding.UTF8.GetBytes(password),
@@ -200,7 +200,7 @@ namespace Gearbox.Tests.Cryptography
         [DataRow(128, 64)]
         [DataRow(129, 65)]
         [DataRow(256, 129)]
-        public void DeriveKey_BinaryPassword_MatchesBclReference(int passwordLength, int keyLength)
+        public void GetBytes_BinaryPassword_MatchesBclReference(int passwordLength, int keyLength)
         {
             byte[] password = Enumerable.Range(0, passwordLength).Select(i => (byte)i).ToArray();
             byte[] salt = { 1, 2, 3, 4, 5, 6, 7, 8 };
@@ -211,7 +211,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void DeriveKey_UnicodeAndEmbeddedNull_MatchesBclReference()
+        public void GetBytes_UnicodeAndEmbeddedNullPassword_MatchesBclReference()
         {
             string password = "päss\0密碼🔑" + new string('x', 200);
             byte[] salt = Enumerable.Range(0, 64).Select(i => (byte)i).ToArray();
@@ -251,7 +251,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void Constructor_CopiesPasswordAndSalt_AndSaltGetterReturnsCopy()
+        public void Constructor_CallerPasswordAndSalt_CopiesInputsAndReturnsSaltCopy()
         {
             byte[] password = Encoding.UTF8.GetBytes("password");
             byte[] salt = { 1, 2, 3, 4, 5, 6, 7, 8 };
@@ -272,7 +272,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void DefaultConstructors_UseSameIterationCountAndRandomSalt()
+        public void Constructor_DefaultOptions_UsesSameIterationsAndRandomSalt()
         {
             using PBKDF2 first = new PBKDF2("password");
             using PBKDF2 second = new PBKDF2("password", 16);
@@ -354,7 +354,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void GetBytes_PreCanceledToken_MultipleIterations_Throws()
+        public void GetBytes_PreCanceledTokenWithMultipleIterations_ThrowsOperationCanceledException()
         {
             CancellationToken token = new CancellationToken(true);
             using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 2, null, token);
@@ -388,7 +388,7 @@ namespace Gearbox.Tests.Cryptography
         [TestMethod]
         [DataRow(0)]
         [DataRow(100)]
-        public void GetBytes_CancelFromProgressCallback_OneIteration_Throws(int cancelAt)
+        public void GetBytes_OneIterationCanceledFromProgressCallback_ThrowsOperationCanceledException(int cancelAt)
         {
             using CancellationTokenSource cancellation = new CancellationTokenSource();
             InlineProgress progress = new InlineProgress(value =>
@@ -468,7 +468,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void GetBytesAfterDispose_WithBufferedBytes_Throws()
+        public void GetBytes_DisposedWithBufferedBytes_ThrowsObjectDisposedException()
         {
             using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 2, null, CancellationToken.None);
             pbkdf2.GetBytes(1);
@@ -478,7 +478,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void ResetAfterDispose_Throws()
+        public void Reset_DisposedInstance_ThrowsObjectDisposedException()
         {
             using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 2, null, CancellationToken.None);
             pbkdf2.Dispose();
@@ -487,7 +487,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void GetBytes_PreCanceledToken_OneIteration_Throws()
+        public void GetBytes_PreCanceledTokenWithOneIteration_ThrowsOperationCanceledException()
         {
             using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 1, null, new CancellationToken(true));
 
@@ -495,7 +495,7 @@ namespace Gearbox.Tests.Cryptography
         }
 
         [TestMethod]
-        public void GetBytes_CanceledToken_WithBufferedBytes_Throws()
+        public void GetBytes_CanceledTokenWithBufferedBytes_ThrowsOperationCanceledException()
         {
             using CancellationTokenSource cancellation = new CancellationTokenSource();
             using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 2, null, cancellation.Token);
@@ -508,7 +508,7 @@ namespace Gearbox.Tests.Cryptography
         [TestMethod]
         [DataRow(199)]
         [DataRow(299)]
-        public void Progress_StaysWithinPercentageRange(int iterations)
+        public void GetBytes_ProgressPercentages_StayWithinRange(int iterations)
         {
             List<int> reports = new List<int>();
             using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], iterations, new InlineProgress(reports.Add), CancellationToken.None);
