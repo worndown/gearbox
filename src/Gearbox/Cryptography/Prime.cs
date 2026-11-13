@@ -13,12 +13,12 @@ namespace Gearbox.Cryptography
     /// not a primality proof. Concurrent calls use independent operation-local state.
     /// Cancellation is checked between computational steps; a single BigInteger.ModPow
     /// call cannot be interrupted.
-    /// Generation at 512 bits or above searches independently on dedicated workers,
+    /// Generation at 512 bits or above shares candidate validation across dedicated workers,
     /// up to one per physical core per call. All workers finish before the call completes.
     /// </remarks>
     public static class Prime
     {
-        private const int RandomMillerRabinRounds = 64;
+        internal const int RandomMillerRabinRounds = 64;
         private const int ParallelGenerationBitLength = 512;
 
         private static readonly int[] SmallPrimes =
@@ -153,7 +153,7 @@ namespace Gearbox.Cryptography
         // Explicit worker settings keep deterministic tests and benchmarks operation-local.
         internal static BigInteger Generate(int bitLength, int workerCount,
             Func<int, RandomByteFiller> randomSourceFactory, CancellationToken cancellationToken,
-            TaskScheduler? workerScheduler = null)
+            TaskScheduler? workerScheduler = null, IPrimeGenerationObserver? observer = null)
         {
             ValidateGenerationWorkers(bitLength, workerCount, randomSourceFactory);
             cancellationToken.ThrowIfCancellationRequested();
@@ -162,7 +162,7 @@ namespace Gearbox.Cryptography
                 return Generate(bitLength, randomSourceFactory(0), cancellationToken);
             }
 
-            using PrimeGenerationContext context = new PrimeGenerationContext(cancellationToken);
+            using PrimeGenerationContext context = new PrimeGenerationContext(cancellationToken, workerCount, observer);
             Task[] workers = StartGenerationWorkers(bitLength, workerCount, randomSourceFactory,
                 context, workerScheduler ?? TaskScheduler.Default);
             context.Completed.Wait();
@@ -172,7 +172,7 @@ namespace Gearbox.Cryptography
 
         internal static Task<BigInteger> GenerateAsync(int bitLength, int workerCount,
             Func<int, RandomByteFiller> randomSourceFactory, CancellationToken cancellationToken,
-            TaskScheduler? workerScheduler = null)
+            TaskScheduler? workerScheduler = null, IPrimeGenerationObserver? observer = null)
         {
             ValidateGenerationWorkers(bitLength, workerCount, randomSourceFactory);
             if (cancellationToken.IsCancellationRequested)
@@ -186,7 +186,7 @@ namespace Gearbox.Cryptography
             }
 
             return GenerateParallelAsync(bitLength, workerCount, randomSourceFactory,
-                cancellationToken, workerScheduler ?? TaskScheduler.Default);
+                cancellationToken, workerScheduler ?? TaskScheduler.Default, observer);
         }
 
         private static void ValidateGenerationWorkers(int bitLength, int workerCount,
@@ -199,22 +199,22 @@ namespace Gearbox.Cryptography
 
         private static Task<BigInteger> GenerateParallelAsync(int bitLength, int workerCount,
             Func<int, RandomByteFiller> randomSourceFactory, CancellationToken cancellationToken,
-            TaskScheduler workerScheduler)
+            TaskScheduler workerScheduler, IPrimeGenerationObserver? observer)
         {
             TaskCompletionSource<BigInteger> completion = new TaskCompletionSource<BigInteger>(TaskCreationOptions.RunContinuationsAsynchronously);
             _ = CompleteParallelGenerationAsync(bitLength, workerCount, randomSourceFactory,
-                cancellationToken, workerScheduler, completion);
+                cancellationToken, workerScheduler, completion, observer);
             return completion.Task;
         }
 
         private static async Task CompleteParallelGenerationAsync(int bitLength, int workerCount,
             Func<int, RandomByteFiller> randomSourceFactory, CancellationToken cancellationToken,
-            TaskScheduler workerScheduler, TaskCompletionSource<BigInteger> completion)
+            TaskScheduler workerScheduler, TaskCompletionSource<BigInteger> completion, IPrimeGenerationObserver? observer)
         {
             try
             {
                 BigInteger result;
-                using (PrimeGenerationContext context = new PrimeGenerationContext(cancellationToken))
+                using (PrimeGenerationContext context = new PrimeGenerationContext(cancellationToken, workerCount, observer))
                 {
                     Task[] workers = StartGenerationWorkers(bitLength, workerCount, randomSourceFactory, context, workerScheduler);
                     await Task.WhenAll(workers).ConfigureAwait(false);
@@ -243,13 +243,15 @@ namespace Gearbox.Cryptography
             Array.Fill(workers, Task.CompletedTask);
             try
             {
-                for (int index = 0; index < workerCount && !context.CancellationToken.IsCancellationRequested; index++)
+                int index = 0;
+                for (; index < workerCount && !context.CancellationToken.IsCancellationRequested; index++)
                 {
                     int workerIndex = index;
                     workers[index] = Task.Factory.StartNew(
                         () => GenerateWorker(bitLength, workerIndex, randomSourceFactory, context),
                         CancellationToken.None, TaskCreationOptions.LongRunning, workerScheduler);
                 }
+                if (index == workerCount) context.MarkScheduledAll();
             }
             catch (Exception exception)
             {
@@ -262,13 +264,69 @@ namespace Gearbox.Cryptography
         private static void GenerateWorker(int bitLength, int workerIndex,
             Func<int, RandomByteFiller> randomSourceFactory, PrimeGenerationContext context)
         {
+            byte[]? candidateBytes = null;
+            byte[]? witnessBytes = null;
             try
             {
                 context.CancellationToken.ThrowIfCancellationRequested();
                 RandomByteFiller fillRandomBytes = randomSourceFactory(workerIndex);
                 ArgumentNullException.ThrowIfNull(fillRandomBytes);
-                BigInteger prime = SearchForPrime(bitLength, fillRandomBytes, context.CancellationToken);
-                context.TryPublish(prime);
+                candidateBytes = new byte[((bitLength - 1) / 8) + 1];
+                int usedBits = ((bitLength - 1) % 8) + 1;
+                byte highByteMask = (byte)((1 << usedBits) - 1);
+                byte highestBit = (byte)(1 << (usedBits - 1));
+                context.WorkerReady(workerIndex);
+                while (context.Acquire(workerIndex, out PrimeAdmissionTicket ticket))
+                {
+                    PreparationOutcome outcome = PreparationOutcome.Composite;
+                    PreparedCandidate? prepared = null;
+                    BigInteger candidate = default;
+                    bool? passed = null;
+                    CancellationToken epochToken = ticket.Epoch.Token;
+                    try
+                    {
+                        context.NotifyAdmission(ticket);
+                        epochToken.ThrowIfCancellationRequested();
+                        if (ticket.Epoch is SearchEpoch)
+                        {
+                            fillRandomBytes(candidateBytes);
+                            epochToken.ThrowIfCancellationRequested();
+                            candidateBytes[0] = (byte)((candidateBytes[0] & highByteMask) | highestBit);
+                            if (bitLength > 2) candidateBytes[^1] |= 1;
+                            candidate = new BigInteger(candidateBytes, isUnsigned: true, isBigEndian: true);
+                            outcome = PrepareCandidate(candidate, epochToken, out prepared);
+                        }
+                        else
+                        {
+                            prepared = ((ValidationEpoch)ticket.Epoch).Candidate;
+                            if (witnessBytes?.Length != prepared.WitnessByteCount)
+                            {
+                                if (witnessBytes is not null) CryptographicOperations.ZeroMemory(witnessBytes);
+                                witnessBytes = new byte[prepared.WitnessByteCount];
+                            }
+                            passed = ValidateRandomRound(prepared, witnessBytes, fillRandomBytes, epochToken);
+                        }
+                    }
+                    catch (OperationCanceledException exception) when (
+                        epochToken.IsCancellationRequested && exception.CancellationToken == epochToken)
+                    {
+                        // Expected epoch handoff/rejection or operation termination; reuse this worker.
+                    }
+                    catch (Exception exception) { context.Fail(exception); }
+                    finally
+                    {
+                        if (ticket.Epoch is SearchEpoch)
+                        {
+                            CryptographicOperations.ZeroMemory(candidateBytes);
+                            context.CompleteSearch(ticket, outcome, candidate, prepared);
+                        }
+                        else
+                        {
+                            if (witnessBytes is not null) CryptographicOperations.ZeroMemory(witnessBytes);
+                            context.CompleteRound(ticket, passed);
+                        }
+                    }
+                }
             }
             catch (OperationCanceledException exception) when (
                 context.CancellationToken.IsCancellationRequested && exception.CancellationToken == context.CancellationToken)
@@ -278,6 +336,11 @@ namespace Gearbox.Cryptography
             catch (Exception exception)
             {
                 context.Fail(exception);
+            }
+            finally
+            {
+                if (candidateBytes is not null) CryptographicOperations.ZeroMemory(candidateBytes);
+                if (witnessBytes is not null) CryptographicOperations.ZeroMemory(witnessBytes);
             }
         }
 
@@ -298,54 +361,18 @@ namespace Gearbox.Cryptography
 
         private static bool IsProbablePrimeCore(BigInteger candidate, RandomByteFiller fillRandomBytes, CancellationToken cancellationToken)
         {
-            if (candidate < 2)
+            PreparationOutcome outcome = PrepareCandidate(candidate, cancellationToken, out PreparedCandidate? prepared);
+            if (outcome != PreparationOutcome.NeedsRandomRounds)
             {
-                return false;
-            }
-            if (candidate == 2 || candidate == 3)
-            {
-                return true;
-            }
-            if (candidate.IsEven)
-            {
-                return false;
-            }
-            foreach (int prime in SmallPrimes)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (candidate == prime)
-                {
-                    return true;
-                }
-
-                if (candidate % prime == 0)
-                {
-                    return false;
-                }
-            }
-            
-            if (IsPerfectSquare(candidate, cancellationToken))
-            {
-                return false;
+                return outcome == PreparationOutcome.KnownPrime;
             }
 
-            (BigInteger oddPart, int powerOfTwo) = SplitPowerOfTwo(candidate - 1, cancellationToken);
-            if (!PassesMillerRabinRound(candidate, 2, oddPart, powerOfTwo, cancellationToken)
-                || !PassesStrongLucas(candidate, cancellationToken))
-            {
-                return false;
-            }
-
-            BigInteger witnessRange = candidate - 3;
-            byte[] witnessBytes = (witnessRange - 1).ToByteArray(isUnsigned: true, isBigEndian: true);
-            int usedBits = BitOperations.Log2((uint)witnessBytes[0]) + 1;
-            byte highByteMask = (byte)((1 << usedBits) - 1);
+            byte[] witnessBytes = new byte[prepared!.WitnessByteCount];
             try
             {
                 for (int round = 0; round < RandomMillerRabinRounds; round++)
                 {
-                    BigInteger witness = SampleBelow(witnessRange, witnessBytes, highByteMask, fillRandomBytes, cancellationToken) + 2;
-                    if (!PassesMillerRabinRound(candidate, witness, oddPart, powerOfTwo, cancellationToken))
+                    if (!ValidateRandomRound(prepared, witnessBytes, fillRandomBytes, cancellationToken))
                     {
                         return false;
                     }
@@ -357,6 +384,66 @@ namespace Gearbox.Cryptography
             {
                 CryptographicOperations.ZeroMemory(witnessBytes);
             }
+        }
+
+        internal static PreparationOutcome PrepareCandidate(BigInteger candidate, CancellationToken cancellationToken,
+            out PreparedCandidate? prepared)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            prepared = null;
+            if (candidate < 2)
+            {
+                return PreparationOutcome.Composite;
+            }
+            if (candidate == 2 || candidate == 3)
+            {
+                return PreparationOutcome.KnownPrime;
+            }
+            if (candidate.IsEven)
+            {
+                return PreparationOutcome.Composite;
+            }
+            foreach (int prime in SmallPrimes)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (candidate == prime)
+                {
+                    return PreparationOutcome.KnownPrime;
+                }
+
+                if (candidate % prime == 0)
+                {
+                    return PreparationOutcome.Composite;
+                }
+            }
+            
+            if (IsPerfectSquare(candidate, cancellationToken))
+            {
+                return PreparationOutcome.Composite;
+            }
+
+            (BigInteger oddPart, int powerOfTwo) = SplitPowerOfTwo(candidate - 1, cancellationToken);
+            if (!PassesMillerRabinRound(candidate, 2, oddPart, powerOfTwo, cancellationToken)
+                || !PassesStrongLucas(candidate, cancellationToken))
+            {
+                return PreparationOutcome.Composite;
+            }
+
+            BigInteger witnessRange = candidate - 3;
+            byte[] witnessBytes = (witnessRange - 1).ToByteArray(isUnsigned: true, isBigEndian: true);
+            int usedBits = BitOperations.Log2((uint)witnessBytes[0]) + 1;
+            byte highByteMask = (byte)((1 << usedBits) - 1);
+            prepared = new PreparedCandidate(candidate, oddPart, powerOfTwo, witnessRange, witnessBytes.Length, highByteMask);
+            CryptographicOperations.ZeroMemory(witnessBytes);
+            return PreparationOutcome.NeedsRandomRounds;
+        }
+
+        internal static bool ValidateRandomRound(PreparedCandidate prepared, byte[] witnessBytes,
+            RandomByteFiller fillRandomBytes, CancellationToken cancellationToken)
+        {
+            BigInteger witness = SampleBelow(prepared.WitnessRange, witnessBytes, prepared.HighByteMask,
+                fillRandomBytes, cancellationToken) + 2;
+            return PassesMillerRabinRound(prepared.Candidate, witness, prepared.OddPart, prepared.PowerOfTwo, cancellationToken);
         }
 
         internal static BigInteger SampleBelow(BigInteger upperBound, byte[] bytes, byte highByteMask, RandomByteFiller fillRandomBytes, CancellationToken cancellationToken)
