@@ -87,9 +87,9 @@
         /// <param name="left">The left value.</param>
         /// <param name="right">The right value.</param>
         /// <returns>true if values are equal; false otherwise.</returns>
-        public static bool operator ==(Hash left, Hash right)
+        public static bool operator ==(Hash? left, Hash? right)
         {
-            return !ReferenceEquals(null, left) && left.Equals(right);
+            return ReferenceEquals(left, right) || (!ReferenceEquals(null, left) && left.Equals(right));
         }
 
         /// <summary>
@@ -98,14 +98,9 @@
         /// <param name="left">The left value.</param>
         /// <param name="right">The right value.</param>
         /// <returns>true if values are not equal; false otherwise.</returns>
-        public static bool operator !=(Hash left, Hash right)
+        public static bool operator !=(Hash? left, Hash? right)
         {
-            if (!ReferenceEquals(null, left))
-            {
-                return !left.Equals(right);
-            }
-
-            return ReferenceEquals(null, right);
+            return !(left == right);
         }
     }
 }
