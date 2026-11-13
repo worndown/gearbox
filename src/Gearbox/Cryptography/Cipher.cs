@@ -29,13 +29,24 @@ namespace Gearbox.Cryptography
         /// </summary>
         private readonly byte[] key;
 
+        private bool disposed;
+
         /// <summary>
         /// Initializes a new instance of the cipher using key material derived from PBKDF2.
         /// </summary>
         /// <param name="pbkdf2">Fully initialized key-derivation function.</param>
         internal Cipher(DeriveBytes pbkdf2)
-            : this(pbkdf2.GetBytes(KeySizeBits / 8))
         {
+            ArgumentNullException.ThrowIfNull(pbkdf2);
+            byte[] derivedKey = pbkdf2.GetBytes(KeySizeBits / 8);
+            try
+            {
+                this.key = CopyKey(derivedKey);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(derivedKey);
+            }
         }
 
         /// <summary>
@@ -45,7 +56,12 @@ namespace Gearbox.Cryptography
         internal Cipher(byte[] key)
         {
             ArgumentNullException.ThrowIfNull(key);
-            this.key = (byte[])key.Clone();
+            this.key = CopyKey(key);
+        }
+
+        internal Cipher(ReadOnlySpan<byte> key)
+        {
+            this.key = CopyKey(key);
         }
 
         /// <summary>
@@ -64,6 +80,7 @@ namespace Gearbox.Cryptography
         /// <returns>Encrypted blob laid out as nonce || tag || ciphertext.</returns>
         public byte[] Encrypt(byte[] plainText, ReadOnlySpan<byte> associatedData = default)
         {
+            ObjectDisposedException.ThrowIf(this.disposed, this);
             ArgumentNullException.ThrowIfNull(plainText);
 
             byte[] result = new byte[NonceSize + TagSize + plainText.Length];
@@ -94,6 +111,7 @@ namespace Gearbox.Cryptography
         /// </exception>
         public byte[] Decrypt(byte[] blob, ReadOnlySpan<byte> associatedData = default)
         {
+            ObjectDisposedException.ThrowIf(this.disposed, this);
             ArgumentNullException.ThrowIfNull(blob);
             if (blob.Length < NonceSize + TagSize)
             {
@@ -105,12 +123,20 @@ namespace Gearbox.Cryptography
             ReadOnlySpan<byte> cipherText = blob.AsSpan(NonceSize + TagSize);
 
             byte[] plainText = new byte[cipherText.Length];
-            using (AesGcm aes = new AesGcm(this.key, TagSize))
+            try
             {
-                aes.Decrypt(nonce, cipherText, tag, plainText, associatedData);
-            }
+                using (AesGcm aes = new AesGcm(this.key, TagSize))
+                {
+                    aes.Decrypt(nonce, cipherText, tag, plainText, associatedData);
+                }
 
-            return plainText;
+                return plainText;
+            }
+            catch
+            {
+                CryptographicOperations.ZeroMemory(plainText);
+                throw;
+            }
         }
 
         /// <summary>
@@ -118,7 +144,21 @@ namespace Gearbox.Cryptography
         /// </summary>
         public void Dispose()
         {
-            CryptographicOperations.ZeroMemory(this.key);
+            if (!this.disposed)
+            {
+                this.disposed = true;
+                CryptographicOperations.ZeroMemory(this.key);
+            }
+        }
+
+        private static byte[] CopyKey(ReadOnlySpan<byte> key)
+        {
+            if (key.Length is not (16 or 24 or 32))
+            {
+                throw new ArgumentException("An AES key must be 16, 24 or 32 bytes long.", nameof(key));
+            }
+
+            return key.ToArray();
         }
     }
 }

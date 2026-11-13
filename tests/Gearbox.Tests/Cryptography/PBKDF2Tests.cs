@@ -194,6 +194,330 @@ namespace Gearbox.Tests.Cryptography
             Assert.IsTrue(expected.SequenceEqual(actual));
         }
 
+        [TestMethod]
+        [DataRow(0, 1)]
+        [DataRow(1, 63)]
+        [DataRow(128, 64)]
+        [DataRow(129, 65)]
+        [DataRow(256, 129)]
+        public void DeriveKey_BinaryPassword_MatchesBclReference(int passwordLength, int keyLength)
+        {
+            byte[] password = Enumerable.Range(0, passwordLength).Select(i => (byte)i).ToArray();
+            byte[] salt = { 1, 2, 3, 4, 5, 6, 7, 8 };
+            byte[] expected = Rfc2898DeriveBytes.Pbkdf2(password, salt, 3, HashAlgorithmName.SHA512, keyLength);
+            using PBKDF2 pbkdf2 = new PBKDF2(password, salt, 3, null, CancellationToken.None);
+
+            CollectionAssert.AreEqual(expected, pbkdf2.GetBytes(keyLength));
+        }
+
+        [TestMethod]
+        public void DeriveKey_UnicodeAndEmbeddedNull_MatchesBclReference()
+        {
+            string password = "päss\0密碼🔑" + new string('x', 200);
+            byte[] salt = Enumerable.Range(0, 64).Select(i => (byte)i).ToArray();
+            byte[] expected = Rfc2898DeriveBytes.Pbkdf2(Encoding.UTF8.GetBytes(password), salt, 101, HashAlgorithmName.SHA512, 129);
+
+            CollectionAssert.AreEqual(expected, DeriveKey(password, salt, 101, 129));
+        }
+
+        [TestMethod]
+        public void GetBytes_IrregularChunks_MatchesBclReference()
+        {
+            int[] lengths = { 1, 2, 61, 64, 65, 3, 128, 7 };
+            byte[] salt = { 1, 2, 3, 4, 5, 6, 7, 8 };
+            byte[] expected = Rfc2898DeriveBytes.Pbkdf2("password", salt, 2, HashAlgorithmName.SHA512, lengths.Sum());
+            using PBKDF2 pbkdf2 = new PBKDF2("password", salt, 2, null, CancellationToken.None);
+            List<byte> actual = new List<byte>();
+
+            foreach (int length in lengths)
+            {
+                actual.AddRange(pbkdf2.GetBytes(length));
+            }
+
+            CollectionAssert.AreEqual(expected, actual.ToArray());
+        }
+
+        [TestMethod]
+        public void Reset_AfterPartialBlock_RestartsBclSequence()
+        {
+            byte[] salt = { 1, 2, 3, 4, 5, 6, 7, 8 };
+            byte[] expected = Rfc2898DeriveBytes.Pbkdf2("password", salt, 2, HashAlgorithmName.SHA512, 129);
+            using PBKDF2 pbkdf2 = new PBKDF2("password", salt, 2, null, CancellationToken.None);
+            pbkdf2.GetBytes(7);
+            pbkdf2.GetBytes(65);
+            pbkdf2.Reset();
+
+            CollectionAssert.AreEqual(expected, pbkdf2.GetBytes(expected.Length));
+        }
+
+        [TestMethod]
+        public void Constructor_CopiesPasswordAndSalt_AndSaltGetterReturnsCopy()
+        {
+            byte[] password = Encoding.UTF8.GetBytes("password");
+            byte[] salt = { 1, 2, 3, 4, 5, 6, 7, 8 };
+            byte[] originalSalt = (byte[])salt.Clone();
+            byte[] expected = Rfc2898DeriveBytes.Pbkdf2(password, salt, 2, HashAlgorithmName.SHA512, 32);
+            using PBKDF2 pbkdf2 = new PBKDF2(password, salt, 2, null, CancellationToken.None);
+            Array.Fill(password, (byte)255);
+            Array.Fill(salt, (byte)255);
+            byte[] exposedSalt = pbkdf2.Salt;
+            Array.Fill(exposedSalt, (byte)255);
+
+            CollectionAssert.AreEqual(originalSalt, pbkdf2.Salt);
+            CollectionAssert.AreEqual(expected, pbkdf2.GetBytes(32));
+            pbkdf2.Dispose();
+            pbkdf2.Dispose();
+            CollectionAssert.AreEqual(Enumerable.Repeat((byte)255, salt.Length).ToArray(), salt);
+            CollectionAssert.AreEqual(Enumerable.Repeat((byte)255, password.Length).ToArray(), password);
+        }
+
+        [TestMethod]
+        public void DefaultConstructors_UseSameIterationCountAndRandomSalt()
+        {
+            using PBKDF2 first = new PBKDF2("password");
+            using PBKDF2 second = new PBKDF2("password", 16);
+            using PBKDF2 explicitSalt = new PBKDF2("password", second.Salt);
+            using PBKDF2 binaryPassword = new PBKDF2(Encoding.UTF8.GetBytes("password"), second.Salt);
+
+            Assert.HasCount(PBKDF2.MinSaltSize, first.Salt);
+            Assert.HasCount(16, second.Salt);
+            Assert.IsFalse(first.Salt.SequenceEqual(second.Salt[..PBKDF2.MinSaltSize]));
+            Assert.AreEqual(210000, first.IterationCount);
+            Assert.AreEqual(first.IterationCount, second.IterationCount);
+            Assert.AreEqual(first.IterationCount, explicitSalt.IterationCount);
+            Assert.AreEqual(first.IterationCount, binaryPassword.IterationCount);
+            byte[] expected = Rfc2898DeriveBytes.Pbkdf2("password", second.Salt, second.IterationCount, HashAlgorithmName.SHA512, 32);
+            CollectionAssert.AreEqual(expected, binaryPassword.GetBytes(32));
+        }
+
+        [TestMethod]
+        [DataRow(-1)]
+        [DataRow(0)]
+        [DataRow(100000001)]
+        [DataRow(int.MaxValue)]
+        public void Constructor_InvalidIterations_Throws(int iterations)
+        {
+            ArgumentOutOfRangeException exception = Assert.ThrowsExactly<ArgumentOutOfRangeException>(
+                () => new PBKDF2("password", new byte[8], iterations, null, CancellationToken.None));
+
+            Assert.AreEqual("iterations", exception.ParamName);
+        }
+
+        [TestMethod]
+        [DataRow(0)]
+        [DataRow(7)]
+        [DataRow(65)]
+        public void Constructor_InvalidSaltLength_Throws(int length)
+        {
+            Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new PBKDF2("password", new byte[length]));
+            Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new PBKDF2("password", length));
+        }
+
+        [TestMethod]
+        public void Constructor_NullBytePassword_Throws()
+        {
+            Assert.ThrowsExactly<ArgumentNullException>(() => new PBKDF2((byte[])null!, new byte[8]));
+        }
+
+        [TestMethod]
+        [DataRow(-1)]
+        [DataRow(0)]
+        [DataRow(int.MaxValue)]
+        public void GetBytes_InvalidLength_ThrowsWithoutAdvancingSequence(int length)
+        {
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 2, null, CancellationToken.None);
+            ArgumentOutOfRangeException exception = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => pbkdf2.GetBytes(length));
+
+            Assert.AreEqual("cb", exception.ParamName);
+            byte[] expected = Rfc2898DeriveBytes.Pbkdf2("password", new byte[8], 2, HashAlgorithmName.SHA512, 32);
+            CollectionAssert.AreEqual(expected, pbkdf2.GetBytes(32));
+        }
+
+        [TestMethod]
+        [DataRow(1)]
+        [DataRow(2)]
+        [DataRow(99)]
+        [DataRow(100)]
+        [DataRow(101)]
+        [DataRow(200)]
+        [DataRow(1000)]
+        public void GetBytes_Progress_IsMonotonicAndEndsAt100(int iterations)
+        {
+            List<int> reports = new List<int>();
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], iterations, new InlineProgress(reports.Add), CancellationToken.None);
+            pbkdf2.GetBytes(32);
+
+            Assert.AreEqual(0, reports[0]);
+            Assert.AreEqual(100, reports[^1]);
+            Assert.IsTrue(reports.All(value => value is >= 0 and <= 100));
+            CollectionAssert.AreEqual(reports.Order().ToArray(), reports.ToArray());
+        }
+
+        [TestMethod]
+        public void GetBytes_PreCanceledToken_MultipleIterations_Throws()
+        {
+            CancellationToken token = new CancellationToken(true);
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 2, null, token);
+
+            OperationCanceledException exception = Assert.ThrowsExactly<OperationCanceledException>(() => pbkdf2.GetBytes(32));
+            Assert.AreEqual(token, exception.CancellationToken);
+        }
+
+        [TestMethod]
+        public void GetBytes_CancelDuringDerivation_ThrowsBeforeCompletion()
+        {
+            using CancellationTokenSource cancellation = new CancellationTokenSource();
+            List<int> reports = new List<int>();
+            InlineProgress progress = new InlineProgress(value =>
+            {
+                reports.Add(value);
+                if (value == 50)
+                {
+                    cancellation.Cancel();
+                }
+            });
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 1000, progress, cancellation.Token);
+
+            OperationCanceledException exception = Assert.ThrowsExactly<OperationCanceledException>(() => pbkdf2.GetBytes(32));
+
+            Assert.AreEqual(cancellation.Token, exception.CancellationToken);
+            Assert.AreEqual(50, reports[^1]);
+            Assert.IsFalse(reports.Contains(100));
+        }
+
+        [TestMethod]
+        [DataRow(0)]
+        [DataRow(100)]
+        public void GetBytes_CancelFromProgressCallback_OneIteration_Throws(int cancelAt)
+        {
+            using CancellationTokenSource cancellation = new CancellationTokenSource();
+            InlineProgress progress = new InlineProgress(value =>
+            {
+                if (value == cancelAt)
+                {
+                    cancellation.Cancel();
+                }
+            });
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 1, progress, cancellation.Token);
+
+            OperationCanceledException exception = Assert.ThrowsExactly<OperationCanceledException>(() => pbkdf2.GetBytes(32));
+
+            Assert.AreEqual(cancellation.Token, exception.CancellationToken);
+        }
+
+        [TestMethod]
+        public void GetBytes_Progress_ReportsEachBlockWithoutDuplicatePercentages()
+        {
+            List<int> reports = new List<int>();
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 199, new InlineProgress(reports.Add), CancellationToken.None);
+            byte[] expected = Rfc2898DeriveBytes.Pbkdf2("password", new byte[8], 199, HashAlgorithmName.SHA512, 129);
+
+            CollectionAssert.AreEqual(expected, pbkdf2.GetBytes(129));
+
+            int blocks = 0;
+            int previous = 100;
+            foreach (int percent in reports)
+            {
+                if (percent == 0)
+                {
+                    Assert.AreEqual(100, previous);
+                    previous = -1;
+                    blocks++;
+                }
+
+                Assert.IsTrue(percent > previous && percent <= 100);
+                previous = percent;
+            }
+
+            Assert.AreEqual(3, blocks);
+            Assert.AreEqual(100, previous);
+        }
+
+        [TestMethod]
+        public void GetBytes_ProgressCallbackThrows_ResetRestartsDerivation()
+        {
+            InvalidOperationException failure = new InvalidOperationException("Progress callback failed.");
+            int startedBlocks = 0;
+            bool fail = true;
+            InlineProgress progress = new InlineProgress(value =>
+            {
+                if (value == 0 && ++startedBlocks == 2 && fail)
+                {
+                    throw failure;
+                }
+            });
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 2, progress, CancellationToken.None);
+
+            Assert.AreSame(failure, Assert.ThrowsExactly<InvalidOperationException>(() => pbkdf2.GetBytes(129)));
+            fail = false;
+            pbkdf2.Reset();
+            byte[] expected = Rfc2898DeriveBytes.Pbkdf2("password", new byte[8], 2, HashAlgorithmName.SHA512, 129);
+
+            CollectionAssert.AreEqual(expected, pbkdf2.GetBytes(129));
+        }
+
+        [TestMethod]
+        public void Constructor_InvalidParameters_PreservesCallerPassword()
+        {
+            byte[] password = Encoding.UTF8.GetBytes("password");
+            byte[] original = (byte[])password.Clone();
+
+            Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new PBKDF2(password, new byte[8], 0, null, CancellationToken.None));
+
+            CollectionAssert.AreEqual(original, password);
+        }
+
+        [TestMethod]
+        public void GetBytesAfterDispose_WithBufferedBytes_Throws()
+        {
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 2, null, CancellationToken.None);
+            pbkdf2.GetBytes(1);
+            pbkdf2.Dispose();
+
+            Assert.ThrowsExactly<ObjectDisposedException>(() => pbkdf2.GetBytes(32));
+        }
+
+        [TestMethod]
+        public void ResetAfterDispose_Throws()
+        {
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 2, null, CancellationToken.None);
+            pbkdf2.Dispose();
+
+            Assert.ThrowsExactly<ObjectDisposedException>(pbkdf2.Reset);
+        }
+
+        [TestMethod]
+        public void GetBytes_PreCanceledToken_OneIteration_Throws()
+        {
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 1, null, new CancellationToken(true));
+
+            Assert.ThrowsExactly<OperationCanceledException>(() => pbkdf2.GetBytes(32));
+        }
+
+        [TestMethod]
+        public void GetBytes_CanceledToken_WithBufferedBytes_Throws()
+        {
+            using CancellationTokenSource cancellation = new CancellationTokenSource();
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], 2, null, cancellation.Token);
+            pbkdf2.GetBytes(32);
+            cancellation.Cancel();
+
+            Assert.ThrowsExactly<OperationCanceledException>(() => pbkdf2.GetBytes(16));
+        }
+
+        [TestMethod]
+        [DataRow(199)]
+        [DataRow(299)]
+        public void Progress_StaysWithinPercentageRange(int iterations)
+        {
+            List<int> reports = new List<int>();
+            using PBKDF2 pbkdf2 = new PBKDF2("password", new byte[8], iterations, new InlineProgress(reports.Add), CancellationToken.None);
+            pbkdf2.GetBytes(32);
+
+            Assert.IsTrue(reports.All(value => value is >= 0 and <= 100), $"Maximum reported progress was {reports.Max()}%.");
+            Assert.AreEqual(100, reports[^1]);
+        }
+
         /// <summary>
         /// Derives key using specified key derivation settings.
         /// </summary>

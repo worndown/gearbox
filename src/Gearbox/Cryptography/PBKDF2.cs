@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+﻿using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -47,7 +47,7 @@ namespace Gearbox.Cryptography
         /// <summary>
         /// Block size in bytes (equals to hash size).
         /// </summary>
-        private readonly int blockSize;
+        private const int BlockSize = SHA512.HashSizeInBytes;
 
         /// <summary>
         /// Key salt.
@@ -72,7 +72,7 @@ namespace Gearbox.Cryptography
         /// <summary>
         /// Buffer with unused key bytes from the last block.
         /// </summary>
-        private byte[] buffer;
+        private readonly byte[] buffer;
 
         /// <summary>
         /// Position in the buffer where key bytes start.
@@ -83,6 +83,8 @@ namespace Gearbox.Cryptography
         /// Position in the buffer where key bytes end.
         /// </summary>
         private int endIndex;
+
+        private bool disposed;
 
         /// <summary>
         /// Initializes a new instance of the PBKDF2 class using password to derive the key.
@@ -129,11 +131,11 @@ namespace Gearbox.Cryptography
         /// <param name="password">The password used to derive the key.</param>
         /// <param name="salt">The key salt used to derive the key.</param>
         /// <param name="iterations">The number of iterations for the operation.</param>
-        /// <param name="progress">The object for key derivation progress reporting.</param>
+        /// <param name="progress">Reports progress from 0 to 100 for each 64-byte key block.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
-        /// <remarks>The minimum recommended number of iterations is 1000.</remarks>
+        /// <remarks>The default is 210,000 iterations. Choose an iteration count appropriate for your password policy and hardware.</remarks>
         public PBKDF2(string password, byte[] salt, int iterations, IProgress<int>? progress, CancellationToken cancellationToken)
-            : this(Encoding.UTF8.GetBytes(password), salt, iterations, progress, cancellationToken)
+            : this(Encoding.UTF8.GetBytes(password), salt, iterations, progress, cancellationToken, clearPassword: true)
         {
         }
 
@@ -143,11 +145,11 @@ namespace Gearbox.Cryptography
         /// <param name="password">The password used to derive the key.</param>
         /// <param name="saltSize">The size, in bytes, of the random salt to generate.</param>
         /// <param name="iterations">The number of iterations for the operation.</param>
-        /// <param name="progress">The object for key derivation progress reporting.</param>
+        /// <param name="progress">Reports progress from 0 to 100 for each 64-byte key block.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
-        /// <remarks>The minimum recommended number of iterations is 1000.</remarks>
+        /// <remarks>The default is 210,000 iterations. Choose an iteration count appropriate for your password policy and hardware.</remarks>
         public PBKDF2(string password, int saltSize, int iterations, IProgress<int>? progress, CancellationToken cancellationToken)
-            : this(Encoding.UTF8.GetBytes(password), GenerateSalt(saltSize), iterations, progress, cancellationToken)
+            : this(password, GenerateSalt(saltSize), iterations, progress, cancellationToken)
         {
         }
 
@@ -157,33 +159,37 @@ namespace Gearbox.Cryptography
         /// <param name="password">The password used to derive the key.</param>
         /// <param name="salt">The key salt used to derive the key.</param>
         /// <param name="iterations">The number of iterations for the operation.</param>
-        /// <param name="progress">The object for key derivation progress reporting.</param>
+        /// <param name="progress">Reports progress from 0 to 100 for each 64-byte key block.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
-        /// <remarks>The minimum recommended number of iterations is 1000.</remarks>
+        /// <remarks>The default is 210,000 iterations. Choose an iteration count appropriate for your password policy and hardware.</remarks>
         public PBKDF2(byte[] password, byte[] salt, int iterations, IProgress<int>? progress, CancellationToken cancellationToken)
+            : this(password, salt, iterations, progress, cancellationToken, clearPassword: false)
         {
-            ArgumentNullException.ThrowIfNull(salt);
+        }
 
-            if (salt.Length is < MinSaltSize or > MaxSaltSize)
+        private PBKDF2(byte[] password, byte[] salt, int iterations, IProgress<int>? progress, CancellationToken cancellationToken, bool clearPassword)
+        {
+            try
             {
-                throw new ArgumentOutOfRangeException(
-                    nameof(salt),
-                    $"Invalid salt length. Must be {MinSaltSize}-{MaxSaltSize} bytes long.");
-            }
+                ArgumentNullException.ThrowIfNull(password);
+                ValidateParameters(salt, iterations);
 
-            if (iterations is < MinIterationCount or > MaxIterationCount)
+                this.salt = (byte[])salt.Clone();
+                this.IterationCount = iterations;
+                this.buffer = new byte[BlockSize];
+                this.currentBlock = 1;
+                this.progress = progress;
+                this.cancellationToken = cancellationToken;
+                this.hmac = new HMACSHA512(password);
+            }
+            finally
             {
-                throw new ArgumentOutOfRangeException(nameof(iterations), "Invalid iteration count.");
+                if (clearPassword)
+                {
+                    // String overloads own this UTF-8 copy; byte[] overloads retain caller ownership.
+                    CryptographicOperations.ZeroMemory(password);
+                }
             }
-
-            this.salt = (byte[])salt.Clone();
-            this.IterationCount = iterations;
-            this.hmac = new HMACSHA512 { Key = password };
-            this.blockSize = this.hmac.HashSize / 8;
-            this.buffer = new byte[this.blockSize];
-            this.currentBlock = 1;
-            this.progress = progress;
-            this.cancellationToken = cancellationToken;
         }
 
         /// <summary>
@@ -210,52 +216,59 @@ namespace Gearbox.Cryptography
         /// </remarks>
         public override byte[] GetBytes(int cb)
         {
+            ObjectDisposedException.ThrowIf(this.disposed, this);
             // Maximum array size is 2147483591
             if (cb is < 1 or > int.MaxValue - 56)
             {
                 throw new ArgumentOutOfRangeException(nameof(cb));
             }
 
+            this.cancellationToken.ThrowIfCancellationRequested();
             byte[] key = new byte[cb];
-            int offset = 0;
-            int size = this.endIndex - this.startIndex;
-            if (size > 0)
+            Span<byte> block = stackalloc byte[BlockSize];
+            try
             {
-                if (cb >= size)
+                int offset = 0;
+                int bufferedCount = Math.Min(cb, this.endIndex - this.startIndex);
+                if (bufferedCount > 0)
                 {
-                    Buffer.BlockCopy(this.buffer, this.startIndex, key, 0, size);
-                    this.startIndex = this.endIndex = 0;
-                    offset += size;
+                    Span<byte> bufferedBytes = this.buffer.AsSpan(this.startIndex, bufferedCount);
+                    bufferedBytes.CopyTo(key);
+                    CryptographicOperations.ZeroMemory(bufferedBytes);
+                    this.startIndex += bufferedCount;
+                    offset = bufferedCount;
+                    if (this.startIndex == this.endIndex)
+                    {
+                        this.startIndex = this.endIndex = 0;
+                    }
                 }
-                else
+
+                while (offset < cb)
                 {
-                    Buffer.BlockCopy(this.buffer, this.startIndex, key, 0, cb);
-                    this.startIndex += cb;
-                    return key;
+                    this.DeriveKey(block);
+                    int count = Math.Min(cb - offset, BlockSize);
+                    block[..count].CopyTo(key.AsSpan(offset));
+                    if (count < BlockSize)
+                    {
+                        block[count..].CopyTo(this.buffer);
+                        this.startIndex = 0;
+                        this.endIndex = BlockSize - count;
+                    }
+
+                    offset += count;
                 }
+
+                return key;
             }
-
-            Debug.Assert(this.startIndex == 0 && this.endIndex == 0);
-
-            while (offset < cb)
+            catch
             {
-                byte[] blockTransformed = this.DeriveKey();
-                int remainder = cb - offset;
-                if (remainder > this.blockSize)
-                {
-                    Buffer.BlockCopy(blockTransformed, 0, key, offset, this.blockSize);
-                    offset += this.blockSize;
-                }
-                else
-                {
-                    Buffer.BlockCopy(blockTransformed, 0, key, offset, remainder);
-                    Buffer.BlockCopy(blockTransformed, remainder, this.buffer, this.startIndex, this.blockSize - remainder);
-                    this.endIndex += (this.blockSize - remainder);
-                    return key;
-                }
+                CryptographicOperations.ZeroMemory(key);
+                throw;
             }
-
-            return key;
+            finally
+            {
+                CryptographicOperations.ZeroMemory(block);
+            }
         }
 
         /// <summary>
@@ -263,9 +276,9 @@ namespace Gearbox.Cryptography
         /// </summary>
         public override void Reset()
         {
-            Array.Clear(this.buffer, 0, this.buffer.Length);
-
-            this.buffer = new byte[this.blockSize];
+            ObjectDisposedException.ThrowIf(this.disposed, this);
+            CryptographicOperations.ZeroMemory(this.buffer);
+            this.hmac.Initialize();
             this.currentBlock = 1;
             this.startIndex = this.endIndex = 0;
         }
@@ -278,88 +291,115 @@ namespace Gearbox.Cryptography
         /// <param name="disposing">Whether object is being disposed.</param>
         protected override void Dispose(bool disposing)
         {
-            base.Dispose(disposing);
-
-            if (disposing)
+            if (disposing && !this.disposed)
             {
+                this.disposed = true;
                 this.hmac.Dispose();
-                Array.Clear(this.buffer, 0, this.buffer.Length);
-                Array.Clear(this.salt, 0, this.salt.Length);
+                CryptographicOperations.ZeroMemory(this.buffer);
+                CryptographicOperations.ZeroMemory(this.salt);
+                this.startIndex = this.endIndex = 0;
             }
+
+            base.Dispose(disposing);
         }
 
         /// <summary>
         /// Derives next key block.
         /// </summary>
-        /// <returns>Next key block.</returns>
-        private byte[] DeriveKey()
+        /// <param name="result">Receives the next 64-byte key block.</param>
+        private void DeriveKey(Span<byte> result)
         {
-            int percentComplete = 0;
-            int reportFrequency = this.IterationCount / 100;
-
-            // Convert current block number into a four-byte, big-endian array.
-            byte[] blockIndex = BitConverter.GetBytes(this.currentBlock);
-            if (BitConverter.IsLittleEndian)
+            Span<byte> input = stackalloc byte[MaxSaltSize + sizeof(uint)];
+            Span<byte> hash = stackalloc byte[BlockSize];
+            Span<byte> nextHash = stackalloc byte[BlockSize];
+            try
             {
-                byte b = blockIndex[0];
-                blockIndex[0] = blockIndex[3];
-                blockIndex[3] = b;
-
-                b = blockIndex[1];
-                blockIndex[1] = blockIndex[2];
-                blockIndex[2] = b;
-            }
-
-            this.hmac.TransformBlock(this.salt, 0, this.salt.Length, this.salt, 0);
-            this.hmac.TransformFinalBlock(blockIndex, 0, blockIndex.Length);
-            byte[]? hash = this.hmac.Hash;
-            Debug.Assert(hash != null);
-
-            byte[] result = hash;
-            this.hmac.Initialize();
-
-            this.progress?.Report(0);
-
-            for (int i = 2; i <= this.IterationCount; ++i)
-            {
+                this.progress?.Report(0);
                 this.cancellationToken.ThrowIfCancellationRequested();
-                hash = this.hmac.ComputeHash(hash);
-                for (int j = 0; j < this.blockSize; ++j)
+
+                this.salt.CopyTo(input);
+                BinaryPrimitives.WriteUInt32BigEndian(input.Slice(this.salt.Length, sizeof(uint)), this.currentBlock);
+                this.ComputeHash(input[..(this.salt.Length + sizeof(uint))], hash);
+                hash.CopyTo(result);
+
+                int percentComplete = 0;
+                for (int i = 2; i <= this.IterationCount; ++i)
                 {
-                    result[j] ^= hash[j];
+                    this.cancellationToken.ThrowIfCancellationRequested();
+                    this.ComputeHash(hash, nextHash);
+                    for (int j = 0; j < BlockSize; ++j)
+                    {
+                        result[j] ^= nextHash[j];
+                    }
+
+                    Span<byte> previousHash = hash;
+                    hash = nextHash;
+                    nextHash = previousHash;
+
+                    if (this.progress is not null)
+                    {
+                        int percent = (int)((long)i * 100 / this.IterationCount);
+                        if (percent > percentComplete)
+                        {
+                            this.progress.Report(percent);
+                            percentComplete = percent;
+                        }
+                    }
                 }
 
-                // If number of iteration < 100 we will report 0 and 100% only.
-                if (reportFrequency > 0 && (i % reportFrequency == 0))
+                if (percentComplete < 100)
                 {
-                    this.progress?.Report(++percentComplete);
+                    this.progress?.Report(100);
                 }
+
+                this.cancellationToken.ThrowIfCancellationRequested();
+                ++this.currentBlock;
             }
-
-            if (percentComplete < 100)
+            finally
             {
-                this.progress?.Report(100);
+                CryptographicOperations.ZeroMemory(input);
+                CryptographicOperations.ZeroMemory(hash);
+                CryptographicOperations.ZeroMemory(nextHash);
+            }
+        }
+
+        private void ComputeHash(ReadOnlySpan<byte> source, Span<byte> destination)
+        {
+            if (!this.hmac.TryComputeHash(source, destination, out _))
+            {
+                throw new CryptographicException("Unable to compute a PBKDF2 hash block.");
+            }
+        }
+
+        internal static void ValidateParameters(byte[] salt, int iterations)
+        {
+            ArgumentNullException.ThrowIfNull(salt);
+            if (salt.Length is < MinSaltSize or > MaxSaltSize)
+            {
+                throw new ArgumentOutOfRangeException(nameof(salt), $"Invalid salt length. Must be {MinSaltSize}-{MaxSaltSize} bytes long.");
             }
 
-            ++this.currentBlock;
-            return result;
+            if (iterations is < MinIterationCount or > MaxIterationCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(iterations), "Invalid iteration count.");
+            }
         }
 
         /// <summary>
         /// Generates random salt value of requested length.
         /// </summary>
-        /// <param name="saltLen">Salt length in bytes.</param>
+        /// <param name="saltSize">Salt length in bytes.</param>
         /// <returns>Random salt value.</returns>
-        private static byte[] GenerateSalt(int saltLen)
+        private static byte[] GenerateSalt(int saltSize)
         {
-            if (saltLen is < MinSaltSize or > MaxSaltSize)
+            if (saltSize is < MinSaltSize or > MaxSaltSize)
             {
                 throw new ArgumentOutOfRangeException(
-                    nameof(salt),
+                    nameof(saltSize),
                     $"Invalid salt length. Must be {MinSaltSize}-{MaxSaltSize} bytes long.");
             }
 
-            return RandomNumberGenerator.GetBytes(saltLen);
+            return RandomNumberGenerator.GetBytes(saltSize);
         }
     }
 }

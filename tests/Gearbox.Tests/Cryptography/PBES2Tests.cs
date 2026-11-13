@@ -142,6 +142,143 @@ namespace Gearbox.Tests.Cryptography
             }
         }
 
+        [TestMethod]
+        [DataRow("", 1)]
+        [DataRow("päss\0密碼🔑", 2)]
+        [DataRow("password", 199)]
+        public void CreateCipher_MatchesBclKeyDerivation(string password, int iterations)
+        {
+            byte[] salt = Enumerable.Range(0, 16).Select(i => (byte)i).ToArray();
+            using Cipher cipher = PBES2.CreateCipher(password, salt, iterations, null, CancellationToken.None);
+
+            AssertBclCanDecrypt(cipher, password, salt, iterations);
+        }
+
+        [TestMethod]
+        [DataRow("", 1)]
+        [DataRow("päss\0密碼🔑", 2)]
+        [DataRow("password", 199)]
+        public async Task CreateCipherAsync_MatchesBclKeyDerivation(string password, int iterations)
+        {
+            byte[] salt = Enumerable.Range(0, 16).Select(i => (byte)i).ToArray();
+            using Cipher cipher = await PBES2.CreateCipherAsync(password, salt, iterations, null, CancellationToken.None);
+
+            AssertBclCanDecrypt(cipher, password, salt, iterations);
+        }
+
+        [TestMethod]
+        [DataRow(true)]
+        [DataRow(false)]
+        public async Task CreateCipherAsync_CustomDerivation_InteroperatesWithBclPath(bool reportProgress)
+        {
+            string password = "päss\0密碼🔑" + new string('x', 200);
+            byte[] salt = Enumerable.Range(0, 64).Select(i => (byte)i).ToArray();
+            List<int> reports = new List<int>();
+            IProgress<int>? progress = reportProgress ? new InlineProgress(reports.Add) : null;
+            using CancellationTokenSource cancellation = new CancellationTokenSource();
+            CancellationToken token = reportProgress ? CancellationToken.None : cancellation.Token;
+            using Cipher custom = await PBES2.CreateCipherAsync(password, salt, 199, progress, token);
+            using Cipher bcl = PBES2.CreateCipher(password, salt, 199, null, CancellationToken.None);
+
+            AssertBclCanDecrypt(custom, password, salt, 199);
+            byte[] plainText = { 1, 2, 3 };
+            CollectionAssert.AreEqual(plainText, bcl.Decrypt(custom.Encrypt(plainText)));
+            CollectionAssert.AreEqual(plainText, custom.Decrypt(bcl.Encrypt(plainText)));
+
+            if (reportProgress)
+            {
+                Assert.AreEqual(0, reports[0]);
+                Assert.AreEqual(100, reports[^1]);
+                Assert.IsTrue(reports.Count <= 101);
+            }
+            else
+            {
+                Assert.HasCount(0, reports);
+            }
+        }
+
+        [TestMethod]
+        public void CreateCipher_InvalidInputs_Throw()
+        {
+            Assert.ThrowsExactly<ArgumentNullException>(() => PBES2.CreateCipher(null!, new byte[8], 1, null, CancellationToken.None));
+            Assert.ThrowsExactly<ArgumentNullException>(() => PBES2.CreateCipher("password", null!, 1, null, CancellationToken.None));
+            Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => PBES2.CreateCipher("password", new byte[7], 1, null, CancellationToken.None));
+            Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => PBES2.CreateCipher("password", new byte[65], 1, null, CancellationToken.None));
+            Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => PBES2.CreateCipher("password", new byte[8], 0, null, CancellationToken.None));
+        }
+
+        [TestMethod]
+        public async Task CreateCipherAsync_InvalidInputs_Throw()
+        {
+            await Assert.ThrowsExactlyAsync<ArgumentNullException>(() => PBES2.CreateCipherAsync(null!, new byte[8], 1, null, CancellationToken.None));
+            await Assert.ThrowsExactlyAsync<ArgumentNullException>(() => PBES2.CreateCipherAsync("password", null!, 1, null, CancellationToken.None));
+            await Assert.ThrowsExactlyAsync<ArgumentOutOfRangeException>(() => PBES2.CreateCipherAsync("password", new byte[7], 1, null, CancellationToken.None));
+            await Assert.ThrowsExactlyAsync<ArgumentOutOfRangeException>(() => PBES2.CreateCipherAsync("password", new byte[8], 0, null, CancellationToken.None));
+        }
+
+        [TestMethod]
+        public async Task CreateCipherAsync_PreCanceledToken_MultipleIterations_CancelsTask()
+        {
+            CancellationToken token = new CancellationToken(true);
+            Task<Cipher> task = PBES2.CreateCipherAsync("password", new byte[8], 2, null, token);
+
+            OperationCanceledException exception = await Assert.ThrowsAsync<OperationCanceledException>(() => task);
+
+            Assert.AreEqual(token, exception.CancellationToken);
+            Assert.IsTrue(task.IsCanceled);
+        }
+
+        [TestMethod]
+        public async Task CreateCipherAsync_CancelDuringDerivation_CancelsTask()
+        {
+            using CancellationTokenSource cancellation = new CancellationTokenSource();
+            InlineProgress progress = new InlineProgress(value =>
+            {
+                if (value == 50)
+                {
+                    cancellation.Cancel();
+                }
+            });
+            Task<Cipher> task = PBES2.CreateCipherAsync("password", new byte[8], 1000, progress, cancellation.Token);
+
+            OperationCanceledException exception = await Assert.ThrowsAsync<OperationCanceledException>(() => task);
+
+            Assert.AreEqual(cancellation.Token, exception.CancellationToken);
+            Assert.IsTrue(task.IsCanceled);
+        }
+
+        [TestMethod]
+        public void CreateCipher_PreCanceledToken_OneIteration_Throws()
+        {
+            Assert.ThrowsExactly<OperationCanceledException>(() =>
+            {
+                using Cipher cipher = PBES2.CreateCipher("password", new byte[8], 1, null, new CancellationToken(true));
+            });
+        }
+
+        [TestMethod]
+        public async Task CreateCipherAsync_PreCanceledToken_OneIteration_Throws()
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            {
+                using Cipher cipher = await PBES2.CreateCipherAsync("password", new byte[8], 1, null, new CancellationToken(true));
+            });
+        }
+
+        private static void AssertBclCanDecrypt(Cipher cipher, string password, byte[] salt, int iterations)
+        {
+            byte[] key = Rfc2898DeriveBytes.Pbkdf2(Encoding.UTF8.GetBytes(password), salt, iterations, HashAlgorithmName.SHA512, 32);
+            byte[] plainText = Encoding.UTF8.GetBytes("plaintext\0密碼");
+            byte[] associatedData = { 1, 2, 3 };
+            byte[] blob = cipher.Encrypt(plainText, associatedData);
+            byte[] actual = new byte[plainText.Length];
+            using AesGcm aes = new AesGcm(key, 16);
+            aes.Decrypt(blob.AsSpan(0, 12), blob.AsSpan(28), blob.AsSpan(12, 16), actual, associatedData);
+
+            Assert.AreEqual(256, cipher.KeySize);
+            CollectionAssert.AreEqual(plainText, actual);
+        }
+
         /// <summary>
         /// Derives key using specified settings and encrypts data.
         /// </summary>
