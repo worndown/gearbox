@@ -1,6 +1,6 @@
 using Gearbox.Extensions;
 
-namespace Gearbox.Tests
+namespace Gearbox.Tests.Extensions
 {
     [TestClass]
     public class StringExtensionsTests

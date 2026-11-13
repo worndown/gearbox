@@ -2,7 +2,7 @@
 using System.Text;
 using Gearbox.Extensions;
 
-namespace Gearbox
+namespace Gearbox.Cryptography
 {
     /// <summary>
     /// X509 certificate helpers.

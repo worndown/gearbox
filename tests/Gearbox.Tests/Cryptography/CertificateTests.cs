@@ -2,9 +2,10 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using Gearbox.Cryptography;
 using Gearbox.Extensions;
 
-namespace Gearbox.Tests
+namespace Gearbox.Tests.Cryptography
 {
     [TestClass]
     public class CertificateTests
