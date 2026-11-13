@@ -453,45 +453,36 @@ summaries for every session and both comparison modes.
 
 | Bits / raw samples | Actual workers | Calls | Median elapsed ms | Sampled p95 ms | Median allocated bytes | Median CPU ms |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [256](prime-performance/samples/session-1-cooperative-256.csv) | 1 | 20 | 17.96605 | 34.2010 | 249220 | 15.6250 |
-| [512](prime-performance/samples/session-1-cooperative-512.csv) | 10 | 20 | 21.88405 | 48.7413 | 1126924 | 195.3125 |
-| [1024](prime-performance/samples/session-1-cooperative-1024.csv) | 10 | 20 | 72.85945 | 142.0630 | 3355560 | 632.8125 |
-| [2048](prime-performance/samples/session-1-cooperative-2048.csv) | 10 | 20 | 658.08060 | 1006.7618 | 11097352 | 6351.5625 |
-| [4096](prime-performance/samples/session-1-cooperative-4096.csv) | 10 | 20 | 5520.59235 | 10551.1746 | 39050444 | 53500.0000 |
+| 256 | 1 | 20 | 17.96605 | 34.2010 | 249220 | 15.6250 |
+| 512 | 10 | 20 | 21.88405 | 48.7413 | 1126924 | 195.3125 |
+| 1024 | 10 | 20 | 72.85945 | 142.0630 | 3355560 | 632.8125 |
+| 2048 | 10 | 20 | 658.08060 | 1006.7618 | 11097352 | 6351.5625 |
+| 4096 | 10 | 20 | 5520.59235 | 10551.1746 | 39050444 | 53500.0000 |
 
 #### Session 2
 
 | Bits / raw samples | Actual workers | Calls | Median elapsed ms | Sampled p95 ms | Median allocated bytes | Median CPU ms |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [256](prime-performance/samples/session-2-cooperative-256.csv) | 1 | 20 | 15.64405 | 27.7192 | 258240 | 15.6250 |
-| [512](prime-performance/samples/session-2-cooperative-512.csv) | 10 | 20 | 20.08085 | 37.0676 | 1008308 | 156.2500 |
-| [1024](prime-performance/samples/session-2-cooperative-1024.csv) | 10 | 20 | 85.79365 | 148.2553 | 3418780 | 781.2500 |
-| [2048](prime-performance/samples/session-2-cooperative-2048.csv) | 10 | 20 | 587.89545 | 1348.2786 | 10561168 | 5640.6250 |
-| [4096](prime-performance/samples/session-2-cooperative-4096.csv) | 10 | 20 | 5722.01960 | 13142.9404 | 40534192 | 55500.0000 |
+| 256 | 1 | 20 | 15.64405 | 27.7192 | 258240 | 15.6250 |
+| 512 | 10 | 20 | 20.08085 | 37.0676 | 1008308 | 156.2500 |
+| 1024 | 10 | 20 | 85.79365 | 148.2553 | 3418780 | 781.2500 |
+| 2048 | 10 | 20 | 587.89545 | 1348.2786 | 10561168 | 5640.6250 |
+| 4096 | 10 | 20 | 5722.01960 | 13142.9404 | 40534192 | 55500.0000 |
 
 #### Session 3
 
 | Bits / raw samples | Actual workers | Calls | Median elapsed ms | Sampled p95 ms | Median allocated bytes | Median CPU ms |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [256](prime-performance/samples/session-3-cooperative-256.csv) | 1 | 20 | 16.05360 | 21.7530 | 238104 | 15.6250 |
-| [512](prime-performance/samples/session-3-cooperative-512.csv) | 10 | 20 | 24.46840 | 56.8606 | 1043952 | 296.8750 |
-| [1024](prime-performance/samples/session-3-cooperative-1024.csv) | 10 | 20 | 88.63105 | 167.4960 | 4160784 | 828.1250 |
-| [2048](prime-performance/samples/session-3-cooperative-2048.csv) | 10 | 20 | 713.47595 | 1202.6530 | 10802100 | 6882.8125 |
-| [4096](prime-performance/samples/session-3-cooperative-4096.csv) | 10 | 20 | 6267.42160 | 15533.0141 | 42600064 | 60765.6250 |
+| 256 | 1 | 20 | 16.05360 | 21.7530 | 238104 | 15.6250 |
+| 512 | 10 | 20 | 24.46840 | 56.8606 | 1043952 | 296.8750 |
+| 1024 | 10 | 20 | 88.63105 | 167.4960 | 4160784 | 828.1250 |
+| 2048 | 10 | 20 | 713.47595 | 1202.6530 | 10802100 | 6882.8125 |
+| 4096 | 10 | 20 | 6267.42160 | 15533.0141 | 42600064 | 60765.6250 |
 
 The 256-bit timings vary with fresh random search even though the route is
 identical. The deterministic 256-bit control independently verifies the serial
 route and the same 65 draws for the known prime `2^256 - 189`. Treat route/draw
 behavior and repeated comparisons as the serial regression evidence.
-
-The historical [comparison tables](prime-performance/measurements.md) retain
-every candidate-race result alongside these final results. The cooperative
-delivery passed all four original conditions in **all three sessions**: median
-latency at most 80% of the old race at both 2048/4096 bits; p95 no worse at those
-sizes; median allocations no greater at those sizes; and median latency no more
-than 110% of the old race at both 512/1024 bits. These are the delivery's original
-acceptance conditions, not an automatic requirement that every future
-optimization improve the final implementation by another 20%.
 
 ### All prepared-prime validation measurements
 
@@ -509,14 +500,14 @@ observations, including CPU time and allocations.
 
 | Actual bits / raw samples | Mode | Workers | Sequences | Median elapsed ms | Sampled p95 ms | Median allocated bytes | Median CPU ms |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [521](prime-performance/diagnostics/prepared-serial-521.csv) | serial | 1 | 5 | 52.79070 | 57.6591 | 19264 | 62.5000 |
-| [521](prime-performance/diagnostics/prepared-shared-521.csv) | shared | 10 | 5 | 8.85130 | 9.4488 | 18112 | 156.2500 |
-| [1279](prime-performance/diagnostics/prepared-serial-1279.csv) | serial | 1 | 5 | 537.93300 | 541.9521 | 35760 | 531.2500 |
-| [1279](prime-performance/diagnostics/prepared-shared-1279.csv) | shared | 10 | 5 | 84.10950 | 90.4315 | 34632 | 796.8750 |
-| [2203](prime-performance/diagnostics/prepared-serial-2203.csv) | serial | 1 | 5 | 2129.67960 | 2135.0650 | 57192 | 2125.0000 |
-| [2203](prime-performance/diagnostics/prepared-shared-2203.csv) | shared | 10 | 5 | 284.53290 | 294.6903 | 59624 | 2640.6250 |
-| [4253](prime-performance/diagnostics/prepared-serial-4253.csv) | serial | 1 | 5 | 12459.86030 | 12534.5740 | 110920 | 12453.1250 |
-| [4253](prime-performance/diagnostics/prepared-shared-4253.csv) | shared | 10 | 5 | 2059.62470 | 2186.4933 | 113160 | 19359.3750 |
+| 521 | serial | 1 | 5 | 52.79070 | 57.6591 | 19264 | 62.5000 |
+| 521 | shared | 10 | 5 | 8.85130 | 9.4488 | 18112 | 156.2500 |
+| 1279 | serial | 1 | 5 | 537.93300 | 541.9521 | 35760 | 531.2500 |
+| 1279 | shared | 10 | 5 | 84.10950 | 90.4315 | 34632 | 796.8750 |
+| 2203 | serial | 1 | 5 | 2129.67960 | 2135.0650 | 57192 | 2125.0000 |
+| 2203 | shared | 10 | 5 | 284.53290 | 294.6903 | 59624 | 2640.6250 |
+| 4253 | serial | 1 | 5 | 12459.86030 | 12534.5740 | 110920 | 12453.1250 |
+| 4253 | shared | 10 | 5 | 2059.62470 | 2186.4933 | 113160 | 19359.3750 |
 
 ### All phase timing measurements
 
@@ -529,8 +520,8 @@ column. Medians of individual intervals need not sum to the median total.
 
 | Bits / raw samples | Search/preparation ms | Handoff/drain ms | Validation ms | Stop/cleanup ms | Total ms |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| [2048](prime-performance/diagnostics/phases-2048.csv) | 656.13440 | 25.99330 | 225.52310 | 0.07950 | 904.61190 |
-| [4096](prime-performance/diagnostics/phases-4096.csv) | 4579.88880 | 154.32430 | 1458.16040 | 0.11920 | 6194.26260 |
+| 2048 | 656.13440 | 25.99330 | 225.52310 | 0.07950 | 904.61190 |
+| 4096 | 4579.88880 | 154.32430 | 1458.16040 | 0.11920 | 6194.26260 |
 
 All ten individual phase observations are preserved here and in the source CSVs:
 
@@ -550,13 +541,10 @@ All ten individual phase observations are preserved here and in the source CSVs:
 ### All final native CPU-profile measurements and filter decision
 
 The final Windows recordings use native sampled CPU stacks plus process/thread,
-module and CLR loader/JIT method events. The minimal
-[GearboxMethods.wprp](prime-performance/GearboxMethods.wprp) uses its own WPR
-instance, skips dynamic PDB generation and records no heap snapshot or thread-time
-workload. The analyzer resolves managed method stacks, selects the isolated
-benchmark's `dotnet` CPU samples, and rejects traces with lost events. There must
-be no other `dotnet` workload in the recording interval because that process-name
-filter would include it.
+module and CLR loader/JIT method events. The analyzer resolves managed method stacks,
+selects the isolated benchmark's `dotnet` CPU samples, and rejects traces with lost
+events. There must be no other `dotnet` workload in the recording interval because
+that process-name filter would include it.
 
 Each workload warms one generation and records five more calls. CPU sample
 counts include the complete traced benchmark process, including warmup; the
@@ -565,8 +553,8 @@ metrics and folded sample stacks are linked in each bit-length row.
 
 | Bits / profile stacks | Total CPU samples | Preparation samples (inclusive) | Random-round samples | Filter upper-bound samples | Missing stacks | Filter share upper bound | Lost events |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [2048](prime-performance/diagnostics/cpu-profile-2048.json) | 40872 | 29212 | 11209 | 123 | 0 | 0.300940% | 0 |
-| [4096](prime-performance/diagnostics/cpu-profile-4096.json) | 417251 | 332112 | 84235 | 402 | 2 | 0.096824% | 0 |
+| 2048 | 40872 | 29212 | 11209 | 123 | 0 | 0.300940% | 0 |
+| 4096 | 417251 | 332112 | 84235 | 402 | 2 | 0.096824% | 0 |
 
 The filter numerator conservatively includes all direct preparation work outside
 the square, decomposition, Miller–Rabin and Lucas helpers, including trial
@@ -584,5 +572,5 @@ separate from the uninstrumented end-to-end baseline:
 
 | Bits / raw samples | Workers | Calls | Median elapsed ms | Sampled p95 ms | Median allocated bytes | Median CPU ms |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [2048](prime-performance/diagnostics/cpu-workload-2048.csv) | 10 | 5 | 666.41400 | 1357.5936 | 11460240 | 6421.8750 |
-| [4096](prime-performance/diagnostics/cpu-workload-4096.csv) | 10 | 5 | 6802.02620 | 11001.8021 | 42875520 | 66406.2500 |
+| 2048 | 10 | 5 | 666.41400 | 1357.5936 | 11460240 | 6421.8750 |
+| 4096 | 10 | 5 | 6802.02620 | 11001.8021 | 42875520 | 66406.2500 |
