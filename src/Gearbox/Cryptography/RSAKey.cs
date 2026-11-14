@@ -1,82 +1,80 @@
-﻿using System.Formats.Asn1;
-using System.Numerics;
+﻿using System.Numerics;
 using System.Security.Cryptography;
 
 namespace Gearbox.Cryptography
 {
     /// <summary>
-    /// Derives RSA key parameters and serializes complete private parameters as PEM.
+    /// Generates RSA keys using custom prime searches and derives two-prime RSA parameters.
     /// </summary>
     /// <remarks>
-    /// Use platform RSA instances to import keys and perform cryptographic operations, and
-    /// RSAKeyGenerator for custom key generation. These helpers are independent of the provider
-    /// and the generation size policy. Returned private parameters and strings belong to the caller.
+    /// Prefer <see cref="RSA.Create(int)" /> for ordinary key generation; use RSA for import, export,
+    /// and cryptographic operations. Custom generation supports cooperative cancellation and uses
+    /// Gearbox's <see cref="Prime" /> implementation, with no claimed security or performance advantage.
+    /// Dispose generated RSA instances. Generation clears temporary parameter arrays after import;
+    /// arrays returned by CreateFullKeyParameters belong to the caller. Immutable BigInteger values
+    /// cannot be reliably erased.
     /// </remarks>
     /// <example>
     /// <code>
-    /// using RSA existing = RSA.Create();
-    /// existing.ImportFromPem(pem);
+    /// using RSA key = RSAKey.Generate(2048);
     /// </code>
     /// </example>
     public static class RSAKey
     {
+        private const int MinimumGenerationBitLength = 2048;
+        private const int MaximumGenerationBitLength = 16384;
+        private const int PublicExponent = 65537;
+
         /// <summary>
-        /// Serializes a complete two-prime RSA private key as DER in an unencrypted PKCS #1 PEM envelope.
+        /// Generates an RSA key with exactly the requested modulus bit length and public exponent 65537.
         /// </summary>
-        /// <param name="rsaParameters">
-        /// The private key parameters. All eight arrays must be non-null, non-empty,
-        /// unsigned big-endian values; leading-zero padding is accepted.
+        /// <param name="bitLength">
+        /// Modulus length from 2048 through 16384 bits, in increments supported by the platform RSA provider.
+        /// Unsupported sizes are rejected without rounding.
         /// </param>
-        /// <returns>
-        /// A string with RSA PRIVATE KEY delimiters and Base64 content wrapped at 76 characters,
-        /// without a newline after the closing delimiter.
-        /// </returns>
+        /// <param name="cancellationToken">Cancellation checked between searches and computational steps.</param>
+        /// <returns>An initialized RSA key that the caller must dispose.</returns>
         /// <remarks>
-        /// Encodes a version-zero RSAPrivateKey sequence, removing redundant leading zeros from each
-        /// INTEGER. This method does not verify the mathematical consistency of the key.
-        /// The input arrays are not modified or cleared. The writer's temporary DER data is cleared,
-        /// but the returned string contains private key material and cannot be reliably cleared.
+        /// P and Q are sampled by separate equal-width probable-prime searches using <see cref="Prime" />.
+        /// Each prime search may use all physical cores. Cancellation cannot interrupt individual BigInteger
+        /// operations, parameter derivation, or native import. Later KeySize assignments use platform generation.
         /// </remarks>
-        /// <exception cref="ArgumentException">A required parameter array is null or empty.</exception>
-        public static string EncodeParametersPem(RSAParameters rsaParameters)
+        /// <exception cref="ArgumentOutOfRangeException">The requested size is outside the generation range or unsupported by the provider.</exception>
+        /// <exception cref="OperationCanceledException">The caller requested cancellation.</exception>
+        /// <example>
+        /// <code>
+        /// using RSA key = RSAKey.Generate(2048);
+        /// byte[] signature = key.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
+        /// </code>
+        /// </example>
+        public static RSA Generate(int bitLength, CancellationToken cancellationToken = default)
         {
-            ReadOnlySpan<byte> modulus = GetUnsignedParameterBytes(rsaParameters.Modulus, nameof(RSAParameters.Modulus));
-            ReadOnlySpan<byte> exponent = GetUnsignedParameterBytes(rsaParameters.Exponent, nameof(RSAParameters.Exponent));
-            ReadOnlySpan<byte> d = GetUnsignedParameterBytes(rsaParameters.D, nameof(RSAParameters.D));
-            ReadOnlySpan<byte> p = GetUnsignedParameterBytes(rsaParameters.P, nameof(RSAParameters.P));
-            ReadOnlySpan<byte> q = GetUnsignedParameterBytes(rsaParameters.Q, nameof(RSAParameters.Q));
-            ReadOnlySpan<byte> dp = GetUnsignedParameterBytes(rsaParameters.DP, nameof(RSAParameters.DP));
-            ReadOnlySpan<byte> dq = GetUnsignedParameterBytes(rsaParameters.DQ, nameof(RSAParameters.DQ));
-            ReadOnlySpan<byte> inverseQ = GetUnsignedParameterBytes(rsaParameters.InverseQ, nameof(RSAParameters.InverseQ));
+            ValidateGenerationRange(bitLength);
+            return Generate(bitLength, Prime.Generate, RSA.Create(), cancellationToken);
+        }
 
-            // Each INTEGER needs at most seven overhead bytes (tag, length, sign byte),
-            // plus six for the SEQUENCE header and three for the version INTEGER.
-            int capacity = checked(modulus.Length + exponent.Length + d.Length + p.Length + q.Length +
-                dp.Length + dq.Length + inverseQ.Length + 8 * 7 + 6 + 3);
-            AsnWriter writer = new AsnWriter(AsnEncodingRules.DER, capacity);
-            try
-            {
-                writer.PushSequence();
-                writer.WriteInteger(0);
-                writer.WriteIntegerUnsigned(modulus);
-                writer.WriteIntegerUnsigned(exponent);
-                writer.WriteIntegerUnsigned(d);
-                writer.WriteIntegerUnsigned(p);
-                writer.WriteIntegerUnsigned(q);
-                writer.WriteIntegerUnsigned(dp);
-                writer.WriteIntegerUnsigned(dq);
-                writer.WriteIntegerUnsigned(inverseQ);
-                writer.PopSequence();
-
-                return writer.Encode(static encoded => string.Concat(
-                    Certificate.PemRsaKeyHeader, Environment.NewLine,
-                    Convert.ToBase64String(encoded, Base64FormattingOptions.InsertLineBreaks),
-                    Environment.NewLine, Certificate.PemRsaKeyFooter));
-            }
-            finally
-            {
-                writer.Reset();
-            }
+        /// <summary>
+        /// Asynchronously generates an RSA key with exactly the requested modulus bit length and public exponent 65537.
+        /// </summary>
+        /// <param name="bitLength">Modulus length from 2048 through 16384 bits, in platform-supported increments.</param>
+        /// <param name="cancellationToken">Cancellation checked between searches and computational steps.</param>
+        /// <returns>A task containing an initialized RSA key that the caller must dispose.</returns>
+        /// <remarks>
+        /// Argument validation is synchronous. A valid request with a pre-canceled token returns a canceled task.
+        /// P and Q searches are awaited sequentially and complete all their workers before completion.
+        /// Cancellation and later KeySize assignments behave as described for <see cref="Generate(int, CancellationToken)" />.
+        /// </remarks>
+        /// <exception cref="ArgumentOutOfRangeException">The requested size is outside the generation range or unsupported by the provider.</exception>
+        /// <example>
+        /// <code>
+        /// using RSA generated =
+        ///     await RSAKey.GenerateAsync(2048, cancellationToken);
+        /// </code>
+        /// </example>
+        public static Task<RSA> GenerateAsync(int bitLength, CancellationToken cancellationToken = default)
+        {
+            ValidateGenerationRange(bitLength);
+            return GenerateAsync(bitLength, Prime.GenerateAsync, RSA.Create(), cancellationToken);
         }
 
         /// <summary>
@@ -190,6 +188,170 @@ namespace Gearbox.Cryptography
             };
         }
 
+        // Operation-local seams. Delegates must return exact-bit-length probable primes.
+        // The factory owns the supplied provider, including when validation or generation fails.
+        internal static RSA Generate(int bitLength, Func<int, CancellationToken, BigInteger> generatePrime,
+            RSA provider, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(provider);
+            try
+            {
+                ArgumentNullException.ThrowIfNull(generatePrime);
+                ValidateGenerationSize(bitLength, provider.LegalKeySizes);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                int primeBits = bitLength / 2;
+                BigInteger minimumSeparation = BigInteger.One << (primeBits - 100);
+                while (true)
+                {
+                    BigInteger p;
+                    do
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        p = generatePrime(primeBits, cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
+                    } while (!IsExponentCompatible(p));
+
+                    BigInteger q;
+                    do
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        q = generatePrime(primeBits, cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
+                    } while (!IsAcceptableQ(p, q, minimumSeparation));
+
+                    if ((p * q).GetBitLength() == bitLength)
+                    {
+                        return ImportGeneratedKey(provider, p, q, cancellationToken);
+                    }
+
+                    // Restart both primes rather than retaining a P that rarely produces a full-width modulus.
+                }
+            }
+            catch
+            {
+                provider.Dispose();
+                throw;
+            }
+        }
+
+        internal static Task<RSA> GenerateAsync(int bitLength, Func<int, CancellationToken, Task<BigInteger>> generatePrime,
+            RSA provider, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(provider);
+            try
+            {
+                ArgumentNullException.ThrowIfNull(generatePrime);
+                ValidateGenerationSize(bitLength, provider.LegalKeySizes);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    provider.Dispose();
+                    return Task.FromCanceled<RSA>(cancellationToken);
+                }
+
+                return GenerateCoreAsync(provider, bitLength, generatePrime, cancellationToken);
+            }
+            catch
+            {
+                provider.Dispose();
+                throw;
+            }
+        }
+
+        private static async Task<RSA> GenerateCoreAsync(RSA provider, int bitLength,
+            Func<int, CancellationToken, Task<BigInteger>> generatePrime, CancellationToken cancellationToken)
+        {
+            try
+            {
+                int primeBits = bitLength / 2;
+                BigInteger minimumSeparation = BigInteger.One << (primeBits - 100);
+                while (true)
+                {
+                    BigInteger p;
+                    do
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        p = await generatePrime(primeBits, cancellationToken).ConfigureAwait(false);
+                        cancellationToken.ThrowIfCancellationRequested();
+                    } while (!IsExponentCompatible(p));
+
+                    BigInteger q;
+                    do
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        q = await generatePrime(primeBits, cancellationToken).ConfigureAwait(false);
+                        cancellationToken.ThrowIfCancellationRequested();
+                    } while (!IsAcceptableQ(p, q, minimumSeparation));
+
+                    if ((p * q).GetBitLength() == bitLength)
+                    {
+                        return ImportGeneratedKey(provider, p, q, cancellationToken);
+                    }
+                }
+            }
+            catch
+            {
+                provider.Dispose();
+                throw;
+            }
+        }
+
+        private static bool IsExponentCompatible(BigInteger prime) =>
+            BigInteger.GreatestCommonDivisor(PublicExponent, prime - 1) == BigInteger.One;
+
+        private static bool IsAcceptableQ(BigInteger p, BigInteger q, BigInteger minimumSeparation) =>
+            IsExponentCompatible(q) && p != q && BigInteger.Abs(p - q) > minimumSeparation;
+
+        private static RSA ImportGeneratedKey(RSA provider, BigInteger p, BigInteger q, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RSAParameters parameters = RSAKey.CreateFullKeyParameters(PublicExponent, p, q);
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                provider.ImportParameters(parameters);
+                cancellationToken.ThrowIfCancellationRequested();
+                return provider;
+            }
+            finally
+            {
+                ClearGeneratedParameters(parameters);
+            }
+        }
+
+        private static void ClearGeneratedParameters(RSAParameters parameters)
+        {
+            CryptographicOperations.ZeroMemory(parameters.Modulus);
+            CryptographicOperations.ZeroMemory(parameters.Exponent);
+            CryptographicOperations.ZeroMemory(parameters.D);
+            CryptographicOperations.ZeroMemory(parameters.P);
+            CryptographicOperations.ZeroMemory(parameters.Q);
+            CryptographicOperations.ZeroMemory(parameters.DP);
+            CryptographicOperations.ZeroMemory(parameters.DQ);
+            CryptographicOperations.ZeroMemory(parameters.InverseQ);
+        }
+
+        private static void ValidateGenerationRange(int bitLength)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(bitLength, MinimumGenerationBitLength);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(bitLength, MaximumGenerationBitLength);
+        }
+
+        private static void ValidateGenerationSize(int bitLength, KeySizes[] legalKeySizes)
+        {
+            ValidateGenerationRange(bitLength);
+            foreach (KeySizes size in legalKeySizes)
+            {
+                if (size.SkipSize == 0 ? bitLength == size.MinSize :
+                    bitLength >= size.MinSize && bitLength <= size.MaxSize && (bitLength - size.MinSize) % size.SkipSize == 0)
+                {
+                    return;
+                }
+            }
+
+            throw new ArgumentOutOfRangeException(nameof(bitLength), "The requested size is unsupported by the platform RSA provider.");
+        }
+
         /// <summary>
         /// Converts a non-negative integer to an unsigned big-endian byte array, optionally padded on the left.
         /// </summary>
@@ -243,29 +405,6 @@ namespace Gearbox.Cryptography
             }
 
             return t;
-        }
-
-        /// <summary>
-        /// Validates an RSA parameter array and exposes its minimally sized unsigned magnitude without copying it.
-        /// </summary>
-        /// <param name="value">The non-null, non-empty unsigned big-endian parameter bytes.</param>
-        /// <param name="fieldName">The RSAParameters field name to report if the array is missing or empty.</param>
-        /// <returns>A span over the original array without leading zeros, retaining one zero byte for the value zero.</returns>
-        /// <exception cref="ArgumentException">The array is null or empty.</exception>
-        private static ReadOnlySpan<byte> GetUnsignedParameterBytes(byte[]? value, string fieldName)
-        {
-            if (value == null || value.Length == 0)
-            {
-                throw new ArgumentException("The RSA parameter must be non-null and non-empty.", fieldName);
-            }
-
-            int offset = 0;
-            while (offset < value.Length - 1 && value[offset] == 0)
-            {
-                offset++;
-            }
-
-            return value.AsSpan(offset);
         }
     }
 }

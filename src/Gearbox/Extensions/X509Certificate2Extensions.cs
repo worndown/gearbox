@@ -267,26 +267,18 @@ namespace Gearbox.Extensions
             }
 
             /// <summary>
-            /// Exports certificate's private key in PEM format.
+            /// Exports the certificate's RSA private key as unencrypted PKCS#1 PEM.
             /// </summary>
-            /// <returns>String containing private key in PEM format.</returns>
+            /// <returns>A string with RSA PRIVATE KEY delimiters, formatted by the platform RSA exporter.</returns>
+            /// <remarks>The returned string contains private key material and cannot be reliably cleared.</remarks>
+            /// <exception cref="InvalidOperationException">The certificate has no RSA private key.</exception>
+            /// <exception cref="CryptographicException">The private key cannot be exported.</exception>
             public string ExportPrivateKeyPem()
             {
                 using RSA? rsa = certificate.GetRSAPrivateKey();
-                if (rsa == null)
-                {
-                    throw new InvalidOperationException("RSA key is expected.");
-                }
-
-                RSAParameters rsaParameters = rsa.ExportParameters(true);
-                try
-                {
-                    return RSAKey.EncodeParametersPem(rsaParameters);
-                }
-                finally
-                {
-                    X509Certificate2.ClearRsaParameters(rsaParameters);
-                }
+                return rsa == null
+                    ? throw new InvalidOperationException("RSA key is expected.")
+                    : rsa.ExportRSAPrivateKeyPem();
             }
 
             /// <summary>

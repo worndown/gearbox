@@ -113,8 +113,8 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
             Assert.IsTrue(cert.IsSelfSigned());
             Assert.IsFalse(cert.BuildChain());
             Assert.IsFalse(cert.IsValidCertificate());
-            Assert.Throws<CryptographicException>(() => cert.BuildIssuerChain());
-            Assert.Throws<CryptographicException>(() => cert.BuildIssuerChainPem());
+            Assert.Throws<CryptographicException>(cert.BuildIssuerChain);
+            Assert.Throws<CryptographicException>(cert.BuildIssuerChainPem);
         }
 
         [TestMethod]
@@ -277,7 +277,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
         {
             using X509Certificate2 cert = Certificate.CreateFromPem(CertPem);
 
-            Assert.ThrowsExactly<InvalidOperationException>(() => cert.ExportPrivateKeyPem());
+            Assert.ThrowsExactly<InvalidOperationException>(cert.ExportPrivateKeyPem);
         }
 
         [TestMethod]
@@ -288,7 +288,7 @@ VeTIr1P7uVWABgJ7i+DkbVriKKk=
             using X509Certificate2 cert = request.CreateSelfSigned(
                 DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
 
-            Assert.ThrowsExactly<InvalidOperationException>(() => cert.ExportPrivateKeyPem());
+            Assert.ThrowsExactly<InvalidOperationException>(cert.ExportPrivateKeyPem);
         }
 
         [TestMethod]
