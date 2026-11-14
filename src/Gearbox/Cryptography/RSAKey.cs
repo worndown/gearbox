@@ -5,8 +5,19 @@ using System.Security.Cryptography;
 namespace Gearbox.Cryptography
 {
     /// <summary>
-    /// Derives two-prime RSA private key parameters and serializes them as PKCS #1 PEM.
+    /// Derives RSA key parameters and serializes complete private parameters as PEM.
     /// </summary>
+    /// <remarks>
+    /// Use platform RSA instances to import keys and perform cryptographic operations, and
+    /// RSAKeyGenerator for custom key generation. These helpers are independent of the provider
+    /// and the generation size policy. Returned private parameters and strings belong to the caller.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// using RSA existing = RSA.Create();
+    /// existing.ImportFromPem(pem);
+    /// </code>
+    /// </example>
     public static class RSAKey
     {
         /// <summary>
